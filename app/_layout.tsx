@@ -124,7 +124,7 @@ const splashStyles = createThemedStyleSheet({
   },
 });
 
-function AppTabs() {
+function AppTabs({ themeRevision }: { themeRevision: number }) {
   const router = useRouter();
   const pathname = usePathname();
   const { role } = useRole();
@@ -426,6 +426,7 @@ function AppTabs() {
   return (
     <View style={tabStyles.appShell} {...settingsSwipeResponder.panHandlers}>
       <Tabs
+        key={themeRevision}
         backBehavior="history"
         screenOptions={({ route }) => ({
           tabBarActiveTintColor: AppColors.primary,
@@ -433,9 +434,9 @@ function AppTabs() {
           tabBarBackground: () => (
             <LinearGradient
               colors={[
-                "rgba(245,240,210,0)",
-                "rgba(245,240,210,0.78)",
-                "rgba(245,240,210,0.98)",
+                `${AppColors.background}00`,
+                `${AppColors.background}C7`,
+                `${AppColors.background}FA`,
               ]}
               locations={[0, 0.42, 1]}
               style={StyleSheet.absoluteFill}
@@ -650,7 +651,7 @@ const tabStyles = createThemedStyleSheet({
     justifyContent: "center",
     backgroundColor: AppColors.primary,
     borderWidth: 4,
-    borderColor: "rgba(245,240,210,0.88)",
+    borderColor: AppColors.background,
     shadowColor: AppColors.shadow,
     shadowOpacity: 1,
     shadowRadius: 9,
@@ -658,7 +659,7 @@ const tabStyles = createThemedStyleSheet({
     elevation: 5,
   },
   centerTabActive: {
-    backgroundColor: "#7FA9C8",
+    backgroundColor: AppColors.accent,
   },
 });
 
@@ -728,14 +729,11 @@ export default function RootLayout() {
           <ToastProvider>
             <GestureHandlerRootView style={{ flex: 1 }}>
               <KeyboardProvider>
-                <View
-                  key={themeRevision}
-                  style={{ flex: 1, backgroundColor: AppColors.background }}
-                >
+                <View style={{ flex: 1, backgroundColor: AppColors.background }}>
                   <AuthGate>
                     <RoleProvider>
                       <AppUpdateChecker enabled={!showSplash} />
-                      <AppTabs />
+                      <AppTabs themeRevision={themeRevision} />
                     </RoleProvider>
                   </AuthGate>
                   {showSplash && (

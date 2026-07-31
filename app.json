@@ -1,0 +1,114 @@
+{
+  "expo": {
+    "name": "PairNest",
+    "slug": "pairnest",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/app-icon.png",
+    "scheme": "pairnest",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "top.yoursigh.pairnest"
+    },
+    "android": {
+      "permissions": [
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING",
+        "android.permission.REQUEST_INSTALL_PACKAGES",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/images/app-icon.png"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "softwareKeyboardLayoutMode": "resize",
+      "package": "top.yoursigh.pairnest",
+      "versionCode": 1
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-notifications",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "允许使用麦克风，以便录制并发送语音消息"
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "允许使用麦克风，以便录制和识别语音消息",
+          "speechRecognitionPermission": "允许使用语音识别，以便将语音消息转换成文字"
+        }
+      ],
+      "./plugins/withBackgroundMessagingService",
+      "./plugins/withAppUpdateDownload",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/app-icon.png",
+          "imageWidth": 160,
+          "resizeMode": "contain",
+          "backgroundColor": "#1a1206"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "允许访问相册，以便选择并发送照片、视频或设置聊天背景",
+          "cameraPermission": "允许使用相机，以便拍摄并发送照片或视频",
+          "microphonePermission": "允许使用麦克风，以便录制并发送语音或视频消息"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "允许使用相机，以便拍摄并发送照片或视频",
+          "microphonePermission": "允许使用麦克风，以便录制并发送有声音的视频",
+          "recordAudioAndroid": true
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "允许访问照片和视频，以便在聊天中选择并发送媒体",
+          "savePhotosPermission": "允许保存照片和视频到系统相册",
+          "preventAutomaticLimitedAccessAlert": true,
+          "granularPermissions": [
+            "photo",
+            "video"
+          ]
+        }
+      ],
+      "@react-native-community/datetimepicker",
+      "expo-font",
+      "expo-web-browser",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableMinifyInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true,
+            "buildArchs": [
+              "arm64-v8a"
+            ]
+          }
+        }
+      ],
+      "expo-video"
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}

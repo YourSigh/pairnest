@@ -1,0 +1,57 @@
+# Dependencies and generated output
+node_modules/
+server/node_modules/
+dist/
+server/dist/
+web-build/
+coverage/
+*.tsbuildinfo
+
+# Expo and native build output
+.expo/
+expo-env.d.ts
+/.kotlin/
+/android/
+/ios/
+.metro-health-check*
+*.apk
+*.aab
+*.ipa
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+credentials.json
+credentials/
+*.jks
+*.keystore
+*.p8
+*.p12
+*.key
+*.pem
+*.mobileprovision
+
+# Runtime and user data
+uploads/
+server/uploads/
+data/
+backups/
+dumps/
+*.db
+*.sqlite
+*.sqlite3
+*.sql
+!server/prisma/migrations/**/migration.sql
+*.sql.gz
+
+# Logs and tool noise
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+*.orig.*
+.DS_Store
+
+# Legacy Expo template output
+app-example/

@@ -1,0 +1,12 @@
+node_modules
+dist
+.env
+.env.*
+*.log
+.git
+coverage
+uploads
+backups
+*.sql
+!prisma/migrations/**/migration.sql
+*.sql.gz

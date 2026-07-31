@@ -1,0 +1,97 @@
+name: pairnest
+
+services:
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${PAIRNEST_DB_NAME:-pairnest}
+      MYSQL_USER: ${PAIRNEST_DB_USER:-pairnest}
+      MYSQL_PASSWORD: ${PAIRNEST_DB_PASSWORD:?Set PAIRNEST_DB_PASSWORD in .env}
+      MYSQL_ROOT_PASSWORD: ${PAIRNEST_DB_ROOT_PASSWORD:?Set PAIRNEST_DB_ROOT_PASSWORD in .env}
+      TZ: ${PAIRNEST_TIMEZONE:-UTC}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - db-data:/var/lib/mysql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - mysqladmin ping -h 127.0.0.1 -uroot -p"$${MYSQL_ROOT_PASSWORD}" --silent
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  migrate:
+    image: pairnest-api:0.1-local
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    restart: "no"
+    environment:
+      PAIRNEST_DATABASE_URL: mysql://${PAIRNEST_DB_USER:-pairnest}:${PAIRNEST_DB_PASSWORD:?Set PAIRNEST_DB_PASSWORD in .env}@db:3306/${PAIRNEST_DB_NAME:-pairnest}
+      NODE_ENV: production
+      TZ: ${PAIRNEST_TIMEZONE:-UTC}
+    command:
+      - ./node_modules/.bin/prisma
+      - migrate
+      - deploy
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    image: pairnest-api:0.1-local
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    environment:
+      PAIRNEST_DATABASE_URL: mysql://${PAIRNEST_DB_USER:-pairnest}:${PAIRNEST_DB_PASSWORD:?Set PAIRNEST_DB_PASSWORD in .env}@db:3306/${PAIRNEST_DB_NAME:-pairnest}
+      NODE_ENV: production
+      PAIRNEST_PORT: "4000"
+      PAIRNEST_UPLOAD_DIR: /app/uploads
+      TZ: ${PAIRNEST_TIMEZONE:-UTC}
+      PAIRNEST_APP_SHARED_SECRET: ${PAIRNEST_APP_SHARED_SECRET:?Set PAIRNEST_APP_SHARED_SECRET in .env}
+      PAIRNEST_AUTH_TOKEN_SECRET: ${PAIRNEST_AUTH_TOKEN_SECRET:?Set PAIRNEST_AUTH_TOKEN_SECRET in .env}
+      PAIRNEST_AUTH_MAX_ACTIVATIONS: ${PAIRNEST_AUTH_MAX_ACTIVATIONS:-6}
+      PAIRNEST_CORS_ORIGIN: ${PAIRNEST_CORS_ORIGIN:-*}
+      PAIRNEST_TRUST_PROXY: ${PAIRNEST_TRUST_PROXY:-false}
+      PAIRNEST_AI_API_URL: ${PAIRNEST_AI_API_URL:-}
+      PAIRNEST_AI_API_KEY: ${PAIRNEST_AI_API_KEY:-}
+      PAIRNEST_AI_MODEL: ${PAIRNEST_AI_MODEL:-}
+      PAIRNEST_AI_CONTEXT_DIR: ${PAIRNEST_AI_CONTEXT_DIR:-}
+      PAIRNEST_AI_CONTEXT_MAX_CHARS: ${PAIRNEST_AI_CONTEXT_MAX_CHARS:-120000}
+      PAIRNEST_TRANSCRIPTION_API_URL: ${PAIRNEST_TRANSCRIPTION_API_URL:-}
+      PAIRNEST_TRANSCRIPTION_API_KEY: ${PAIRNEST_TRANSCRIPTION_API_KEY:-}
+      PAIRNEST_TRANSCRIPTION_MODEL: ${PAIRNEST_TRANSCRIPTION_MODEL:-whisper-1}
+      PAIRNEST_TRANSCRIPTION_LANGUAGE: ${PAIRNEST_TRANSCRIPTION_LANGUAGE:-zh}
+      PAIRNEST_OPENCLAW_BRIDGE_TOKEN: ${PAIRNEST_OPENCLAW_BRIDGE_TOKEN:-}
+      PAIRNEST_OPENCLAW_MEDIA_TOKEN_SECRET: ${PAIRNEST_OPENCLAW_MEDIA_TOKEN_SECRET:-}
+      PAIRNEST_OPENCLAW_SESSION_KEY: ${PAIRNEST_OPENCLAW_SESSION_KEY:-}
+    ports:
+      - ${PAIRNEST_API_BIND:-127.0.0.1}:${PAIRNEST_API_PORT:-4000}:4000
+    volumes:
+      - uploads:/app/uploads
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:4000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  db-data:
+  uploads:

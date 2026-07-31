@@ -1,0 +1,590 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("PAIRNEST_DATABASE_URL")
+}
+
+enum PartnerRole {
+  partnerA
+  partnerB
+}
+
+model CountdownEvent {
+  id                 String   @id
+  ownerRole          String?  @db.VarChar(16)
+  title              String   @db.VarChar(128)
+  startDate          String   @db.VarChar(10)
+  isPinned           Boolean  @default(false)
+  isFixed            Boolean  @default(false)
+  category           String?  @db.VarChar(64)
+  calendarType       String   @default("solar") @db.VarChar(16)
+  lunarYear          Int?
+  lunarMonth         Int?
+  lunarDay           Int?
+  lunarIsLeapMonth   Boolean?
+  repeatMode         String   @default("none") @db.VarChar(16)
+  pastDisplayMode    String   @default("days") @db.VarChar(16)
+  reminderOffsetDays Int?
+  note               String?  @db.Text
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([ownerRole, isFixed])
+  @@index([isPinned])
+  @@index([startDate])
+}
+
+model PeriodRecord {
+  id        String   @id
+  startDate String   @db.VarChar(10)
+  endDate   String?  @db.VarChar(10)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([startDate])
+}
+
+model PeriodSettings {
+  id             Int @id @default(1)
+  cycleLength    Int @default(28)
+  periodDuration Int @default(5)
+}
+
+model PeriodDailyLog {
+  date      String   @id @db.VarChar(10)
+  flow      String?  @db.VarChar(16)
+  pain      Int?
+  symptoms  String   @default("[]") @db.VarChar(1024)
+  note      String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model CoupleCheckIn {
+  id              String   @id @db.VarChar(80)
+  date            String   @db.VarChar(10)
+  role            String   @db.VarChar(16)
+  mood            String   @db.VarChar(32)
+  message         String   @db.Text
+  gachaReturnUsed Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([date, role])
+  @@index([date])
+  @@index([role])
+}
+
+model RelationshipNotificationCopy {
+  targetRole String   @id @db.VarChar(16)
+  authorRole String   @db.VarChar(16)
+  content    String   @db.VarChar(80)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([authorRole])
+  @@index([updatedAt])
+}
+
+model WishItem {
+  id          String    @id @db.VarChar(80)
+  title       String    @db.VarChar(120)
+  description String    @db.Text
+  ownerRole   String    @db.VarChar(16)
+  status      String    @default("open") @db.VarChar(16)
+  priority    String    @default("normal") @db.VarChar(16)
+  category    String    @default("小心愿") @db.VarChar(32)
+  targetDate  String?   @db.VarChar(10)
+  reservedBy  String?   @db.VarChar(16)
+  fulfilledAt DateTime?
+  fulfilledBy String?   @db.VarChar(16)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([ownerRole])
+  @@index([status])
+  @@index([priority])
+  @@index([targetDate])
+  @@index([updatedAt])
+}
+
+model GachaEgg {
+  id           String      @id @db.VarChar(80)
+  eggType      String      @db.VarChar(16)
+  title        String      @db.VarChar(120)
+  description  String      @db.Text
+  creatorRole  String      @db.VarChar(16)
+  targetRole   String      @db.VarChar(16)
+  status       String      @default("queued") @db.VarChar(16)
+  expiresAt    DateTime?
+  drawnAt      DateTime?
+  respondedAt  DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  draw         GachaDraw?
+
+  @@index([targetRole, status, createdAt])
+  @@index([creatorRole, status, createdAt])
+  @@index([expiresAt])
+}
+
+model GachaDraw {
+  id           String    @id @db.VarChar(80)
+  pool         String    @default("limited") @db.VarChar(16)
+  source       String    @db.VarChar(16)
+  eggType      String    @db.VarChar(16)
+  templateId   String?   @db.VarChar(80)
+  customEggId  String?   @unique @db.VarChar(80)
+  title        String    @db.VarChar(120)
+  description  String    @db.Text
+  starterTask  String    @db.Text
+  partnerTask  String    @db.Text
+  duration     String    @db.VarChar(32)
+  scene        String    @db.VarChar(32)
+  color        String    @db.VarChar(16)
+  softColor    String    @db.VarChar(16)
+  icon         String    @db.VarChar(64)
+  drawnBy      String    @db.VarChar(16)
+  creatorRole  String?   @db.VarChar(16)
+  targetRole   String?   @db.VarChar(16)
+  status       String    @default("drawn") @db.VarChar(16)
+  completedAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  customEgg    GachaEgg? @relation(fields: [customEggId], references: [id])
+
+  @@index([drawnBy, createdAt])
+  @@index([drawnBy, pool, createdAt])
+  @@index([creatorRole, createdAt])
+  @@index([status, createdAt])
+}
+
+model GachaDailyState {
+  id         String   @id @db.VarChar(80)
+  date       String   @db.VarChar(10)
+  role       String   @db.VarChar(16)
+  returnUsed Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([date, role])
+  @@index([date])
+  @@index([role])
+}
+
+model TimelineNode {
+  id            String   @id @db.VarChar(80)
+  title         String   @db.VarChar(120)
+  description   String   @db.Text
+  eventDate     String   @db.VarChar(10)
+  eventTime     String?  @db.VarChar(5)
+  location      String?  @db.VarChar(80)
+  mood          String   @default("sweet") @db.VarChar(32)
+  category      String   @default("日常") @db.VarChar(32)
+  createdBy     String   @db.VarChar(16)
+  isHighlight   Boolean  @default(false)
+  imageFileName String?  @db.VarChar(255)
+  imageMimeType String?  @db.VarChar(64)
+  imageSize     Int?
+  imageWidth    Int?
+  imageHeight   Int?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([eventDate])
+  @@index([createdBy])
+  @@index([isHighlight])
+  @@index([updatedAt])
+}
+
+model ChatMessage {
+  id                    String    @id
+  sender                String    @db.VarChar(16)
+  content               String    @db.Text
+  messageType           String    @default("text") @db.VarChar(16)
+  audioFileName         String?   @db.VarChar(255)
+  audioMimeType         String?   @db.VarChar(64)
+  audioSize             Int?
+  audioDurationMs       Int?
+  imageFileName         String?   @db.VarChar(255)
+  imageMimeType         String?   @db.VarChar(64)
+  imageSize             Int?
+  imageWidth            Int?
+  imageHeight           Int?
+  imageThumbFileName    String?   @db.VarChar(255)
+  imageThumbMimeType    String?   @db.VarChar(64)
+  imageThumbSize        Int?
+  imageThumbWidth       Int?
+  imageThumbHeight      Int?
+  imageOriginalFileName String?   @db.VarChar(255)
+  imageOriginalMimeType String?   @db.VarChar(64)
+  imageOriginalSize     Int?
+  imageOriginalWidth    Int?
+  imageOriginalHeight   Int?
+  videoFileName         String?   @db.VarChar(255)
+  videoMimeType         String?   @db.VarChar(64)
+  videoSize             Int?
+  videoDurationMs       Int?
+  videoWidth            Int?
+  videoHeight           Int?
+  videoThumbFileName    String?   @db.VarChar(255)
+  videoThumbMimeType    String?   @db.VarChar(64)
+  videoThumbSize        Int?
+  videoThumbWidth       Int?
+  videoThumbHeight      Int?
+  stickerId             String?   @db.VarChar(80)
+  stickerFileName       String?   @db.VarChar(255)
+  stickerMimeType       String?   @db.VarChar(64)
+  stickerSize           Int?
+  stickerWidth          Int?
+  stickerHeight         Int?
+  transcript            String?   @db.Text
+  transcriptionStatus   String?   @db.VarChar(16)
+  replyToMessageId      String?
+  recalledAt            DateTime?
+  recalledBy            String?   @db.VarChar(16)
+  isFavorite            Boolean   @default(false)
+  createdAt             DateTime  @default(now())
+  favorites             ChatMessageFavorite[]
+
+  @@index([createdAt])
+  @@index([recalledAt])
+  @@index([replyToMessageId])
+  @@index([isFavorite, createdAt])
+  @@index([stickerId])
+}
+
+model ChatMessageFavorite {
+  messageId String      @db.VarChar(191)
+  ownerRole String      @db.VarChar(16)
+  createdAt DateTime    @default(now())
+  message   ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@id([messageId, ownerRole])
+  @@index([ownerRole, createdAt])
+}
+
+model ChatSticker {
+  id        String   @id @db.VarChar(80)
+  ownerRole String   @db.VarChar(16)
+  fileName  String   @db.VarChar(255)
+  mimeType  String   @db.VarChar(64)
+  fileHash  String   @db.VarChar(64)
+  size      Int
+  width     Int
+  height    Int
+  sortOrder Int      @default(0)
+  isDeleted Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([ownerRole, fileHash])
+  @@index([ownerRole, isDeleted, sortOrder])
+}
+
+model ChatReadState {
+  role              String   @id @db.VarChar(16)
+  lastReadMessageId String   @db.VarChar(64)
+  lastReadAt        DateTime
+  updatedAt         DateTime @updatedAt
+}
+
+model AiChatMessage {
+  id               String   @id @db.VarChar(64)
+  conversationRole String   @db.VarChar(16)
+  messageRole      String   @db.VarChar(16)
+  content          String   @db.Text
+  sortOrder        BigInt   @default(0)
+  createdAt        DateTime @default(now())
+
+  @@index([conversationRole, createdAt])
+  @@index([conversationRole, sortOrder])
+}
+
+model AiMemory {
+  id          String   @id @db.VarChar(64)
+  subjectRole String   @db.VarChar(16)
+  sourceRole  String   @db.VarChar(16)
+  content     String   @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([subjectRole, updatedAt])
+}
+
+model MemoryReport {
+  id            String   @id @db.VarChar(96)
+  reportType    String   @db.VarChar(16)
+  periodKey     String   @db.VarChar(10)
+  viewerRole    String   @db.VarChar(16)
+  payloadJson   String   @db.LongText
+  statsJson     String   @db.LongText
+  sourceVersion String   @db.VarChar(64)
+  generatedByAi Boolean  @default(false)
+  generatedAt   DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([reportType, periodKey, viewerRole])
+  @@index([viewerRole, generatedAt])
+  @@index([reportType, periodKey])
+}
+
+model AuthConfig {
+  id              Int      @id @default(1)
+  secretHash      String   @db.VarChar(256)
+  maxActivations  Int      @default(2)
+  activationCount Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model AuthActivationAttempt {
+  scope           String    @db.VarChar(16)
+  subjectHash     String    @db.VarChar(64)
+  failedCount     Int       @default(0)
+  windowStartedAt DateTime
+  lastFailedAt    DateTime
+  blockedUntil    DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@id([scope, subjectHash])
+  @@index([blockedUntil])
+  @@index([lastFailedAt])
+}
+
+model DeviceSession {
+  id                        String    @id @db.VarChar(64)
+  deviceId                  String    @unique @db.VarChar(128)
+  partnerRole               PartnerRole
+  deviceSecretHash          String    @db.VarChar(64)
+  refreshTokenHash          String    @unique @db.VarChar(64)
+  previousRefreshTokenHash  String?   @db.VarChar(64)
+  previousRefreshValidUntil DateTime?
+  deviceName                String?   @db.VarChar(128)
+  platform                  String?   @db.VarChar(32)
+  osVersion                 String?   @db.VarChar(64)
+  appVersion                String?   @db.VarChar(32)
+  lastUsedAt                DateTime  @default(now())
+  revokedAt                 DateTime?
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+
+  @@index([revokedAt])
+  @@index([lastUsedAt])
+  @@index([partnerRole, revokedAt])
+}
+
+model VanishingTicTacToeGame {
+  id                Int      @id @default(1)
+  status            String   @default("waiting") @db.VarChar(16)
+  round             Int      @default(0)
+  femaleReady       Boolean  @default(false)
+  maleReady         Boolean  @default(false)
+  starterRole       String?  @db.VarChar(16)
+  currentTurn       String?  @db.VarChar(16)
+  winnerRole        String?  @db.VarChar(16)
+  boardJson         String   @default("[]") @db.VarChar(2048)
+  femaleQueueJson   String   @default("[]") @db.VarChar(128)
+  maleQueueJson     String   @default("[]") @db.VarChar(128)
+  winningLineJson   String   @default("[]") @db.VarChar(64)
+  moveNumber        Int      @default(0)
+  startedAt         DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model DrawGuessRound {
+  id              String             @id @db.VarChar(80)
+  roundNumber     Int                @unique
+  status          String             @default("choosing") @db.VarChar(16)
+  drawerRole      String             @db.VarChar(16)
+  guesserRole     String             @db.VarChar(16)
+  category        String             @db.VarChar(24)
+  wordId          String?            @db.VarChar(64)
+  answer          String?            @db.VarChar(64)
+  hint            String?            @db.VarChar(160)
+  wordChoicesJson String             @default("[]") @db.VarChar(1024)
+  drawingJson     String             @db.LongText
+  strokeCount     Int                @default(0)
+  hintUsed        Boolean            @default(false)
+  submittedAt     DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  guesses         DrawGuessAttempt[]
+
+  @@index([status, updatedAt])
+  @@index([drawerRole, createdAt])
+  @@index([guesserRole, createdAt])
+  @@index([completedAt])
+}
+
+model DrawGuessAttempt {
+  id        String         @id @db.VarChar(80)
+  roundId   String         @db.VarChar(80)
+  role      String         @db.VarChar(16)
+  content   String         @db.VarChar(64)
+  isCorrect Boolean        @default(false)
+  createdAt DateTime       @default(now())
+  round     DrawGuessRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
+
+  @@index([roundId, createdAt])
+  @@index([role, createdAt])
+}
+
+model TruthOrDareRound {
+  id                 String                @id @db.VarChar(80)
+  roundNumber        Int                   @unique
+  status             String                @default("selecting") @db.VarChar(16)
+  kind               String                @db.VarChar(16)
+  performerRole      String                @db.VarChar(16)
+  pickerRole         String                @db.VarChar(16)
+  selectedQuestionId String?               @db.VarChar(80)
+  replacementCount   Int                   @default(0)
+  completedAt        DateTime?
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+  questions          TruthOrDareQuestion[]
+
+  @@index([status, updatedAt])
+  @@index([performerRole, createdAt])
+  @@index([pickerRole, createdAt])
+  @@index([completedAt])
+}
+
+model TruthOrDareQuestion {
+  id              String            @id @db.VarChar(80)
+  roundId         String            @db.VarChar(80)
+  batchNumber     Int               @default(1)
+  kind            String            @db.VarChar(16)
+  content         String            @db.VarChar(600)
+  normalizedKey   String            @unique @db.VarChar(191)
+  generatedByRole String            @db.VarChar(16)
+  targetRole      String            @db.VarChar(16)
+  selectedAt      DateTime?
+  discardedAt     DateTime?
+  createdAt       DateTime          @default(now())
+  round           TruthOrDareRound  @relation(fields: [roundId], references: [id], onDelete: Cascade)
+
+  @@index([roundId, batchNumber, createdAt])
+  @@index([generatedByRole, kind, createdAt])
+  @@index([targetRole, kind, createdAt])
+}
+
+model CouplePet {
+  id          Int      @id @default(1)
+  name        String   @default("团团") @db.VarChar(24)
+  species     String   @default("samoyed") @db.VarChar(24)
+  level       Int      @default(1)
+  experience  Int      @default(0)
+  hunger      Int      @default(82)
+  happiness   Int      @default(88)
+  cleanliness Int      @default(90)
+  energy      Int      @default(86)
+  affection   Int      @default(0)
+  coins       Int      @default(120)
+  careStreak  Int      @default(0)
+  lastCareDate String?  @db.VarChar(10)
+  lastDailyClaimDate String? @db.VarChar(10)
+  unlockedJson String  @default("[]") @db.VarChar(2048)
+  equippedAccessory String? @db.VarChar(32)
+  questClaimDate String? @db.VarChar(10)
+  questClaimsJson String @default("[]") @db.VarChar(512)
+  duoRewardDate String? @db.VarChar(10)
+  wishCompletedDate String? @db.VarChar(10)
+  lastMailRewardDate String? @db.VarChar(10)
+  postmanTrips Int @default(0)
+  sleepInterruptedUntil DateTime?
+  adoptedAt   DateTime @default(now())
+  stateAt     DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  activities  PetActivity[]
+  letters     PetLetter[]
+  ownedItems  PetOwnedItem[]
+  placements PetRoomPlacement[]
+  facilities PetFacility[]
+}
+
+model PetActivity {
+  id        String    @id @db.VarChar(80)
+  petId     Int
+  role      String    @db.VarChar(16)
+  action    String    @db.VarChar(24)
+  message   String    @db.VarChar(160)
+  xpEarned  Int       @default(0)
+  coinsUsed Int       @default(0)
+  createdAt DateTime  @default(now())
+  pet       CouplePet @relation(fields: [petId], references: [id], onDelete: Cascade)
+
+  @@index([petId, createdAt])
+  @@index([role, createdAt])
+}
+
+model PetLetter {
+  id            String    @id @db.VarChar(80)
+  petId         Int
+  senderRole    String    @db.VarChar(16)
+  recipientRole String    @db.VarChar(16)
+  theme         String    @default("miss") @db.VarChar(24)
+  satchel       String    @default("pink") @db.VarChar(16)
+  message       String    @db.VarChar(400)
+  status        String    @default("waiting") @db.VarChar(16)
+  responseKind  String?   @db.VarChar(16)
+  responseText  String?   @db.VarChar(200)
+  openedAt      DateTime?
+  respondedAt   DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  pet           CouplePet @relation(fields: [petId], references: [id], onDelete: Cascade)
+
+  @@index([recipientRole, status, createdAt])
+  @@index([senderRole, createdAt])
+  @@index([petId, createdAt])
+}
+
+model PetOwnedItem {
+  id             String    @id @db.VarChar(80)
+  petId          Int
+  itemKey        String    @db.VarChar(48)
+  source         String    @default("purchase") @db.VarChar(16)
+  acquiredByRole String?   @db.VarChar(16)
+  acquiredAt     DateTime  @default(now())
+  pet            CouplePet @relation(fields: [petId], references: [id], onDelete: Cascade)
+
+  @@unique([petId, itemKey])
+  @@index([petId, acquiredAt])
+}
+
+model PetRoomPlacement {
+  id            Int       @id @default(autoincrement())
+  petId         Int
+  scene         String    @default("room") @db.VarChar(16)
+  slotKey       String    @db.VarChar(24)
+  itemKey       String    @db.VarChar(48)
+  updatedByRole String    @db.VarChar(16)
+  updatedAt     DateTime  @updatedAt
+  pet           CouplePet @relation(fields: [petId], references: [id], onDelete: Cascade)
+
+  @@unique([petId, scene, slotKey])
+  @@index([petId, updatedAt])
+}
+
+model PetFacility {
+  id            Int       @id @default(autoincrement())
+  petId         Int
+  facilityKey   String    @db.VarChar(16)
+  level         Int       @default(1)
+  updatedByRole String    @db.VarChar(16)
+  updatedAt     DateTime  @updatedAt
+  pet           CouplePet @relation(fields: [petId], references: [id], onDelete: Cascade)
+
+  @@unique([petId, facilityKey])
+}

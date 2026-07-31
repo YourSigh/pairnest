@@ -4,13 +4,12 @@ import { useEffect, useState } from "react";
 import {
   Modal,
   Platform,
-  StyleSheet,
   TouchableOpacity,
   View,
 } from "react-native";
 
 import { ThemedText } from "@/components/themed-text";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import { formatDate, getWeekdayLabel } from "@/services/PeriodCalculator";
 import type { PeriodRecord } from "@/services/PeriodStorage";
 
@@ -159,7 +158,7 @@ export function PeriodRecordForm({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   overlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.4)",

@@ -1,4 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { createThemedStyleSheet } from "@/constants/theme";
 import { useEffect, useState } from "react";
 import {
   Modal,
@@ -367,7 +368,7 @@ export function PetNewcomerGuide({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   root: {
     flex: 1,
     alignItems: "center",

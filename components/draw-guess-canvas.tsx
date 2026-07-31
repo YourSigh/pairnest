@@ -15,7 +15,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppAlert } from "@/components/app-dialog";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import type {
   DrawGuessPoint,
   DrawGuessStroke,
@@ -456,7 +456,7 @@ export function DrawGuessCanvas({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   root: {
     width: "100%",
     gap: 10,

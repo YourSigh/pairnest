@@ -1,4 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { createThemedStyleSheet } from "@/constants/theme";
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -664,7 +665,7 @@ export function PetRoomEditor({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   backdrop: {
     flex: 1,
     justifyContent: "flex-end",

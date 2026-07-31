@@ -1,4 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { createThemedStyleSheet } from "@/constants/theme";
 import { useState } from "react";
 import {
   ActivityIndicator,
@@ -331,7 +332,7 @@ export function PetPostOffice({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   card: {
     marginHorizontal: 16,
     marginTop: 13,

@@ -7,6 +7,7 @@ import {
   RadialGradient,
   vec,
 } from "@shopify/react-native-skia";
+import { createThemedStyleSheet } from "@/constants/theme";
 import { useEffect, useMemo } from "react";
 import { StyleSheet, View } from "react-native";
 import {
@@ -189,7 +190,7 @@ function BurstSpark({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   wrap: {
     position: "absolute",
     left: "50%",

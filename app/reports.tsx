@@ -23,7 +23,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppBackButton } from "@/components/app-back-button";
 import { ThemedText } from "@/components/themed-text";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import { useRole } from "@/services/RoleContext";
 import {
   type MemoryReport,
@@ -503,7 +503,7 @@ export default function ReportsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   container: { flex: 1, backgroundColor: AppColors.background },
   header: {
     height: 58,

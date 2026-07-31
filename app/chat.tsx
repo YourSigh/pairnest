@@ -80,7 +80,7 @@ import {
   ChatRole,
   partnerRole,
 } from "@/constants/chat";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import { ChatBackgroundStorage } from "@/services/ChatBackgroundStorage";
 import { ChatReadReceiptDisplayStorage } from "@/services/ChatReadReceiptDisplayStorage";
 import { ChatTimeDisplayStorage } from "@/services/ChatTimeDisplayStorage";
@@ -5084,7 +5084,7 @@ export default function ChatScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   container: {
     flex: 1,
     backgroundColor: AppColors.background,

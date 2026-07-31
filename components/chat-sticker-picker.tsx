@@ -22,7 +22,7 @@ import {
 
 import { ThemedText } from "@/components/themed-text";
 import type { ChatRole } from "@/constants/chat";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import {
   ChatStickerService,
   type ChatSticker,
@@ -460,7 +460,7 @@ export function ChatStickerPicker({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   container: {
     flex: 1,
   },

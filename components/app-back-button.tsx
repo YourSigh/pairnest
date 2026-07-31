@@ -6,7 +6,7 @@ import {
   type ViewStyle,
 } from "react-native";
 
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 
 type AppBackButtonProps = {
   onPress: () => void;
@@ -36,7 +36,7 @@ export function AppBackButton({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   button: {
     width: 40,
     height: 40,

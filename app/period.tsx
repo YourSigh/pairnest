@@ -3,7 +3,6 @@ import { useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ScrollView,
-  StyleSheet,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -16,7 +15,7 @@ import { PeriodRecordForm } from "@/components/period-record-form";
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
 import { useToast } from "@/components/toast";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import {
   addDays,
   type CycleTrendSummary,
@@ -970,7 +969,7 @@ function SettingRow({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   container: {
     flex: 1,
     backgroundColor: AppColors.background,

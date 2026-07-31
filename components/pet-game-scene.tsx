@@ -1,4 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { createThemedStyleSheet } from "@/constants/theme";
 import { LinearGradient } from "expo-linear-gradient";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -1601,7 +1602,7 @@ export function PetGameScene({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   scene: {
     width: "100%",
     aspectRatio: 1086 / 1448,

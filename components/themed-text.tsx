@@ -1,4 +1,5 @@
-import { StyleSheet, Text, type TextProps } from 'react-native';
+import { Text, type TextProps } from 'react-native';
+import { createThemedStyleSheet } from "@/constants/theme";
 
 import { useThemeColor } from '@/hooks/use-theme-color';
 
@@ -33,7 +34,7 @@ export function ThemedText({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   default: {
     fontSize: 16,
     lineHeight: 24,

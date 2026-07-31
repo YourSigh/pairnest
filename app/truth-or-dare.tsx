@@ -25,7 +25,7 @@ import { AppBackButton } from "@/components/app-back-button";
 import { AppAlert } from "@/components/app-dialog";
 import { useToast } from "@/components/toast";
 import { CHAT_ROLE_NAMES, type ChatRole } from "@/constants/chat";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import { ChatService } from "@/services/ChatService";
 import { useRole } from "@/services/RoleContext";
 import {
@@ -928,7 +928,7 @@ export default function TruthOrDareScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   container: {
     flex: 1,
     backgroundColor: "#FBF7ED",

@@ -20,7 +20,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { ThemedText } from "@/components/themed-text";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 
 const PAGE_SIZE = 80;
 const MAX_SELECTED_ASSETS = 9;
@@ -1170,7 +1170,7 @@ export function MediaGalleryModal({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   container: { flex: 1, backgroundColor: AppColors.background },
   header: {
     minHeight: 58,

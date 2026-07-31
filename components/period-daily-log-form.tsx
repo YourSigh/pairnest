@@ -5,14 +5,13 @@ import {
   Modal,
   Platform,
   ScrollView,
-  StyleSheet,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 
 import { ThemedText } from "@/components/themed-text";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import { getWeekdayLabel } from "@/services/PeriodCalculator";
 import type {
   PeriodDailyLog,
@@ -246,7 +245,7 @@ function OptionChip({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   overlay: {
     flex: 1,
     justifyContent: "flex-end",

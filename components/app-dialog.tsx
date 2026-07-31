@@ -11,7 +11,7 @@ import {
   View,
 } from "react-native";
 
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 
 export type AppDialogButton = {
   text?: string;
@@ -230,7 +230,7 @@ export function AppDialogProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   root: {
     flex: 1,
     alignItems: "center",

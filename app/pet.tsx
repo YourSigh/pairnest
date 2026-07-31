@@ -1,4 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { createThemedStyleSheet } from "@/constants/theme";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useIsFocused } from "@react-navigation/native";
 import * as Haptics from "expo-haptics";
@@ -871,7 +872,7 @@ export default function PetScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   flex: { flex: 1 },
   inactiveScreen: {
     flex: 1,

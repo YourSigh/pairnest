@@ -1,4 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { createThemedStyleSheet } from "@/constants/theme";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -712,7 +713,7 @@ export default function TicTacToeScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   safeArea: {
     flex: 1,
     backgroundColor: "#F7F0DF",

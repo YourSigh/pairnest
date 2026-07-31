@@ -13,7 +13,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { ThemedText } from "@/components/themed-text";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 
 type CropRatio = "free" | "1:1" | "4:3" | "16:9";
 
@@ -433,7 +433,7 @@ export function ChatPhotoCropEditor({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   container: {
     flex: 1,
     backgroundColor: "#000",

@@ -13,7 +13,6 @@ import {
   type LayoutChangeEvent,
   PanResponder,
   ScrollView,
-  StyleSheet,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -27,7 +26,7 @@ import {
   type MoreFeatureId,
   type MoreFeatureItem,
 } from "@/constants/navigation";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import { NavigationLayoutStorage } from "@/services/NavigationLayoutStorage";
 import { SettingsDrawerGestureLock } from "@/services/SettingsDrawerGestureLock";
 
@@ -335,7 +334,7 @@ export default function MoreScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   container: {
     flex: 1,
     backgroundColor: AppColors.background,

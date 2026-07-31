@@ -8,7 +8,6 @@ import {
   Modal,
   Platform,
   ScrollView,
-  StyleSheet,
   TextInput,
   TouchableOpacity,
   View,
@@ -26,7 +25,7 @@ import {
   DEFAULT_CHAT_ROLE,
   partnerRole,
 } from "@/constants/chat";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import { useRole } from "@/services/RoleContext";
 import {
   WishDraft,
@@ -940,7 +939,7 @@ function WishFormModal({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   container: {
     flex: 1,
     backgroundColor: AppColors.background,

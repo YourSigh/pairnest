@@ -32,7 +32,7 @@ import {
   type ChatRole,
   partnerRole,
 } from "@/constants/chat";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import {
   type ChatMessage,
   ChatService,
@@ -610,7 +610,7 @@ export function GameChatOverlay({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   floatingBallPosition: {
     position: "absolute",
     left: 0,

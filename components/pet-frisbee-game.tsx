@@ -1,4 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { createThemedStyleSheet } from "@/constants/theme";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   useCallback,
@@ -1341,7 +1342,7 @@ export function PetFrisbeeGame({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   root: {
     overflow: "hidden",
     backgroundColor: "#FFF8F3",

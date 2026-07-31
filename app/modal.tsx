@@ -23,7 +23,7 @@ import { AppBackButton } from "@/components/app-back-button";
 import { AppAlert } from "@/components/app-dialog";
 import { ThemedText } from "@/components/themed-text";
 import { useToast } from "@/components/toast";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import {
   type CountdownCalendarType,
   type CountdownEvent,
@@ -981,7 +981,7 @@ export default function AnniversaryFormScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   container: {
     flex: 1,
     backgroundColor: AppColors.background,

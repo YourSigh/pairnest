@@ -35,7 +35,7 @@ import {
   MOOD_OPTIONS,
   type CoupleCheckInMood,
 } from "@/constants/check-in";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import { useAppActive } from "@/hooks/use-app-active";
 import {
   CoupleCheckInData,
@@ -1016,7 +1016,7 @@ export default function CheckInScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   container: {
     flex: 1,
     backgroundColor: AppColors.background,

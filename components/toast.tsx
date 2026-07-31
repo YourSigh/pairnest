@@ -1,4 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { createThemedStyleSheet } from "@/constants/theme";
 import {
   createContext,
   useCallback,
@@ -7,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Animated, StyleSheet, Text } from "react-native";
+import { Animated, Text } from "react-native";
 
 type ToastOptions = {
   message: string;
@@ -73,7 +74,7 @@ function ToastBubble({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   container: {
     position: "absolute",
     bottom: 120,

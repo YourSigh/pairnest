@@ -1,8 +1,8 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { StyleSheet, TouchableOpacity, View } from "react-native";
+import { TouchableOpacity, View } from "react-native";
 
 import { ThemedText } from "@/components/themed-text";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import type { CalendarDay, DayMarker } from "@/services/PeriodCalculator";
 
 const WEEKDAY_LABELS = ["日", "一", "二", "三", "四", "五", "六"];
@@ -194,7 +194,7 @@ function LegendItem({ color, label }: { color: string; label: string }) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   container: {
     backgroundColor: AppColors.card,
     borderRadius: 16,

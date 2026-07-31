@@ -4,7 +4,6 @@ import { useCallback, useMemo, useState } from "react";
 import {
   RefreshControl,
   ScrollView,
-  StyleSheet,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -12,7 +11,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppAlert } from "@/components/app-dialog";
 import { ThemedText } from "@/components/themed-text";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import {
   type CountdownEvent,
   CountdownStorage,
@@ -400,7 +399,7 @@ export default function HomeScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   container: {
     flex: 1,
     backgroundColor: AppColors.background,

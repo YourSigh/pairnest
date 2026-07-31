@@ -49,7 +49,7 @@ import {
   TIMELINE_BACKGROUND_FILES,
   type TimelineBackgroundFile,
 } from "@/constants/pet-assets";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import { useAppActive } from "@/hooks/use-app-active";
 import { useRole } from "@/services/RoleContext";
 import { TimelineAssetCache } from "@/services/TimelineAssetCache";
@@ -2671,7 +2671,7 @@ function TimelineFormModal({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   inactiveScreen: {
     flex: 1,
     backgroundColor: AppColors.background,

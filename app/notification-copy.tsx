@@ -7,7 +7,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  StyleSheet,
   TextInput,
   TouchableOpacity,
   View,
@@ -18,7 +17,7 @@ import { AppBackButton } from "@/components/app-back-button";
 import { AppAlert } from "@/components/app-dialog";
 import { ThemedText } from "@/components/themed-text";
 import { CHAT_ROLE_NAMES, partnerRole } from "@/constants/chat";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import { useRole } from "@/services/RoleContext";
 import {
   DEFAULT_RELATIONSHIP_NOTIFICATION_COPY,
@@ -183,7 +182,7 @@ export default function NotificationCopyScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   container: { flex: 1, backgroundColor: AppColors.background },
   keyboardArea: { flex: 1 },
   header: {

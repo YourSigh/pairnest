@@ -5,7 +5,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  StyleSheet,
   TextInput,
   TouchableOpacity,
   View,
@@ -14,7 +13,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { ThemedText } from "@/components/themed-text";
 import type { PartnerRole } from "@/constants/chat";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import { useAuth } from "@/services/AuthContext";
 
 const PARTNER_OPTIONS: {
@@ -313,7 +312,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   container: {
     flex: 1,
     backgroundColor: AppColors.background,

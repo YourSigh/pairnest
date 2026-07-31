@@ -9,7 +9,6 @@ import {
   Linking,
   Platform,
   ScrollView,
-  StyleSheet,
   TouchableOpacity,
   type StyleProp,
   View,
@@ -30,7 +29,14 @@ import {
   MAX_BOTTOM_NAVIGATION_ITEMS,
   MIN_BOTTOM_NAVIGATION_ITEMS,
 } from "@/constants/navigation";
-import { AppColors } from "@/constants/theme";
+import {
+  APP_THEMES,
+  APP_THEME_IDS,
+  AppColors,
+  type AppThemeId,
+  createThemedStyleSheet,
+} from "@/constants/theme";
+import { AppThemeStorage } from "@/services/AppThemeStorage";
 import {
   checkForAppUpdate,
   getInstalledVersionInfo,
@@ -121,6 +127,7 @@ export function SettingsPanel({
     useState(false);
   const [voiceDownloadDisplayEnabled, setVoiceDownloadDisplayEnabled] =
     useState(false);
+  const [appThemeId, setAppThemeId] = useState<AppThemeId>("blossom");
   const [openClawDisplayEnabled, setOpenClawDisplayEnabled] = useState(false);
   const [archiveStashEnabled, setArchiveStashEnabled] = useState(false);
   const [archivePreviewEnabled, setArchivePreviewEnabled] = useState(false);
@@ -160,6 +167,7 @@ export function SettingsPanel({
     void SettingsUnlockStorage.isArchivePreviewEnabled().then(
       setArchivePreviewEnabled,
     );
+    void AppThemeStorage.load().then(setAppThemeId);
     const loadOpenClawSettings = () => {
       void OpenClawStorage.getSettings().then((settings) => {
         setOpenClawDisplayEnabled(settings.displayEnabled);
@@ -190,6 +198,7 @@ export function SettingsPanel({
     );
     const unsubscribeTimelineTheme =
       TimelineThemeStorage.subscribe(setTimelineThemeMode);
+    const unsubscribeAppTheme = AppThemeStorage.subscribe(setAppThemeId);
     const unsubscribeOpenClaw = OpenClawStorage.subscribe(
       loadOpenClawSettings,
     );
@@ -200,6 +209,7 @@ export function SettingsPanel({
     return () => {
       unsubscribe();
       unsubscribeTimelineTheme();
+      unsubscribeAppTheme();
       unsubscribeOpenClaw();
       unsubscribeBottomNavigation();
     };
@@ -302,6 +312,20 @@ export function SettingsPanel({
       });
     } catch {
       toast.show({ message: "设置失败，请重试", icon: "alert-circle" });
+    }
+  };
+
+  const handleSelectAppTheme = async (themeId: AppThemeId) => {
+    if (themeId === appThemeId) return;
+    try {
+      await AppThemeStorage.set(themeId);
+      setAppThemeId(themeId);
+      toast.show({
+        message: `已切换为${APP_THEMES[themeId].label}主题`,
+        icon: "checkmark-circle",
+      });
+    } catch {
+      toast.show({ message: "主题保存失败，请重试", icon: "alert-circle" });
     }
   };
 
@@ -913,6 +937,60 @@ export function SettingsPanel({
         </View>
 
         <ThemedText style={[styles.sectionTitle, styles.sectionSpacing]}>
+          App 主题色
+        </ThemedText>
+        <ThemedText style={styles.sectionHint}>
+          选择后会立即应用，并只保存在本机。
+        </ThemedText>
+        <View style={styles.themeGrid}>
+          {APP_THEME_IDS.map((themeId) => {
+            const theme = APP_THEMES[themeId];
+            const selected = appThemeId === themeId;
+            return (
+              <TouchableOpacity
+                key={themeId}
+                style={[styles.themeOption, selected && styles.themeOptionSelected]}
+                onPress={() => void handleSelectAppTheme(themeId)}
+                activeOpacity={0.72}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: selected }}
+              >
+                <View style={styles.themeSwatches}>
+                  <View
+                    style={[
+                      styles.themeSwatch,
+                      { backgroundColor: theme.colors.primary },
+                    ]}
+                  />
+                  <View
+                    style={[
+                      styles.themeSwatch,
+                      styles.themeSwatchOverlap,
+                      { backgroundColor: theme.colors.accent },
+                    ]}
+                  />
+                </View>
+                <View style={styles.themeOptionCopy}>
+                  <ThemedText style={styles.optionLabel}>
+                    {theme.label}
+                  </ThemedText>
+                  <ThemedText style={styles.settingStatus}>
+                    {theme.description}
+                  </ThemedText>
+                </View>
+                {selected ? (
+                  <Ionicons
+                    name="checkmark-circle"
+                    size={21}
+                    color={theme.colors.primary}
+                  />
+                ) : null}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        <ThemedText style={[styles.sectionTitle, styles.sectionSpacing]}>
           时间线外观
         </ThemedText>
         <ThemedText style={styles.sectionHint}>
@@ -1198,7 +1276,7 @@ export default function SettingsScreen() {
   return <SettingsPanel />;
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   container: {
     flex: 1,
     backgroundColor: AppColors.background,
@@ -1254,6 +1332,45 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: AppColors.border,
     overflow: "hidden",
+  },
+  themeGrid: {
+    gap: 10,
+  },
+  themeOption: {
+    minHeight: 76,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: AppColors.border,
+    backgroundColor: AppColors.card,
+  },
+  themeOptionSelected: {
+    borderColor: AppColors.primary,
+    backgroundColor: AppColors.background,
+  },
+  themeSwatches: {
+    width: 48,
+    height: 38,
+    justifyContent: "center",
+  },
+  themeSwatch: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 2,
+    borderColor: AppColors.white,
+  },
+  themeSwatchOverlap: {
+    position: "absolute",
+    left: 17,
+  },
+  themeOptionCopy: {
+    flex: 1,
+    gap: 4,
+    paddingHorizontal: 12,
   },
   optionRow: {
     flexDirection: "row",

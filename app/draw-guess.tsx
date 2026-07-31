@@ -17,7 +17,6 @@ import {
   Platform,
   RefreshControl,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
@@ -33,7 +32,7 @@ import {
   CHAT_ROLE_NAMES,
   type ChatRole,
 } from "@/constants/chat";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import { ChatService } from "@/services/ChatService";
 import {
   DrawGuessService,
@@ -1181,7 +1180,7 @@ function WaitingCard({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   container: { flex: 1, backgroundColor: AppColors.background },
   flex: { flex: 1 },
   header: {

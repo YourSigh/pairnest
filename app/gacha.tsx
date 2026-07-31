@@ -29,7 +29,7 @@ import {
   type ChatRole,
   partnerRole,
 } from "@/constants/chat";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import { useAppActive } from "@/hooks/use-app-active";
 import {
   GACHA_POOL_META,
@@ -3316,7 +3316,7 @@ export default function GachaScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   container: {
     flex: 1,
     backgroundColor: AppColors.background,

@@ -40,10 +40,11 @@ import {
   DEFAULT_BOTTOM_NAVIGATION_IDS,
   getNavigationItem,
 } from "@/constants/navigation";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { SettingsPanel } from "@/app/settings";
 import { AuthProvider } from "@/services/AuthContext";
+import { AppThemeStorage } from "@/services/AppThemeStorage";
 import { BackgroundMessagingService } from "@/services/BackgroundMessagingService";
 import { BackgroundMessagingStorage } from "@/services/BackgroundMessagingStorage";
 import { ChatService } from "@/services/ChatService";
@@ -110,7 +111,7 @@ function AppSplash({
   );
 }
 
-const splashStyles = StyleSheet.create({
+const splashStyles = createThemedStyleSheet({
   container: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 999,
@@ -610,7 +611,7 @@ function AppTabs() {
   );
 }
 
-const tabStyles = StyleSheet.create({
+const tabStyles = createThemedStyleSheet({
   appShell: {
     flex: 1,
   },
@@ -664,10 +665,31 @@ const tabStyles = StyleSheet.create({
 export default function RootLayout() {
   const colorScheme = useColorScheme();
   const [showSplash, setShowSplash] = useState(true);
+  const [themeReady, setThemeReady] = useState(false);
+  const [themeRevision, setThemeRevision] = useState(0);
 
   useEffect(() => {
-    void SystemUI.setBackgroundColorAsync(AppColors.card);
+    let mounted = true;
+    void AppThemeStorage.load().finally(() => {
+      if (mounted) {
+        setThemeReady(true);
+        setThemeRevision((current) => current + 1);
+      }
+    });
+    const unsubscribe = AppThemeStorage.subscribe(() => {
+      setThemeRevision((current) => current + 1);
+      void SystemUI.setBackgroundColorAsync(AppColors.card);
+    });
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
   }, []);
+
+  useEffect(() => {
+    if (!themeReady) return;
+    void SystemUI.setBackgroundColorAsync(AppColors.card);
+  }, [themeReady, themeRevision]);
 
   useEffect(() => {
     TimelineAssetCache.ensure(Object.values(TIMELINE_BACKGROUND_FILES));
@@ -681,15 +703,35 @@ export default function RootLayout() {
     setShowSplash(false);
   }, []);
 
+  if (!themeReady) return null;
+
+  const navigationTheme =
+    colorScheme === "dark"
+      ? DarkTheme
+      : {
+          ...DefaultTheme,
+          colors: {
+            ...DefaultTheme.colors,
+            primary: AppColors.primary,
+            background: AppColors.background,
+            card: AppColors.card,
+            text: AppColors.text,
+            border: AppColors.border,
+          },
+        };
+
   return (
-    <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
+    <ThemeProvider value={navigationTheme}>
       <StatusBar style="dark" />
       <AuthProvider>
         <AppDialogProvider>
           <ToastProvider>
             <GestureHandlerRootView style={{ flex: 1 }}>
               <KeyboardProvider>
-                <View style={{ flex: 1, backgroundColor: AppColors.background }}>
+                <View
+                  key={themeRevision}
+                  style={{ flex: 1, backgroundColor: AppColors.background }}
+                >
                   <AuthGate>
                     <RoleProvider>
                       <AppUpdateChecker enabled={!showSplash} />

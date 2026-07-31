@@ -43,7 +43,7 @@ import { AppBackButton } from "@/components/app-back-button";
 import { ThemedText } from "@/components/themed-text";
 import { useToast } from "@/components/toast";
 import { CHAT_ROLE_NAMES } from "@/constants/chat";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import {
   AiMessage,
   type AiMessageFile,
@@ -1607,7 +1607,7 @@ export default function AiScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   container: {
     flex: 1,
     backgroundColor: AppColors.background,

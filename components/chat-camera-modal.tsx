@@ -25,7 +25,7 @@ import {
   type ChatPhotoAsset,
 } from "@/components/chat-photo-crop-editor";
 import { ThemedText } from "@/components/themed-text";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 
 const LONG_PRESS_DELAY_MS = 320;
 const MIN_VIDEO_DURATION_MS = 500;
@@ -585,7 +585,7 @@ export function ChatCameraModal({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   container: {
     flex: 1,
     backgroundColor: "#000",

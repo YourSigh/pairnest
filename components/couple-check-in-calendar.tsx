@@ -1,10 +1,10 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { StyleSheet, TouchableOpacity, View } from "react-native";
+import { TouchableOpacity, View } from "react-native";
 
 import { ThemedText } from "@/components/themed-text";
 import { getMoodOption } from "@/constants/check-in";
 import type { CoupleCheckInMood } from "@/constants/check-in";
-import { AppColors } from "@/constants/theme";
+import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import type {
   CoupleCheckInData,
   CoupleCheckInRole,
@@ -162,7 +162,7 @@ export function CoupleCheckInCalendar({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createThemedStyleSheet({
   container: {
     backgroundColor: AppColors.card,
     borderRadius: 16,

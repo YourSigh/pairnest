@@ -23,17 +23,14 @@ deployment; it is not a multi-tenant isolation boundary.
 
 ## External data processing
 
-The default self-hosted stack does not require an AI, transcription, or
-OpenClaw service. These integrations stay disabled when their configuration is
-blank.
+The default self-hosted stack does not require an AI or transcription service.
+These integrations stay disabled when their configuration is blank.
 
 When enabled:
 
 - An AI provider may receive prompts, relationship context, memories, titles,
   or recent activity used by the selected feature.
 - A transcription provider receives the audio selected for transcription.
-- OpenClaw may process messages and media through the operator's configured
-  gateway.
 
 The operator is responsible for understanding each provider's retention,
 training, access, and data-location terms, and for obtaining both partners'

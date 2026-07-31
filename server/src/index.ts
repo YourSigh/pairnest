@@ -17,10 +17,6 @@ import { eventsRouter } from './routes/events';
 import { drawGuessRouter } from './routes/draw-guess';
 import { gachaRouter } from './routes/gacha';
 import { messagesRouter } from './routes/messages';
-import {
-  openClawPublicMediaRouter,
-  openClawRouter,
-} from './routes/openclaw';
 import { periodRouter } from './routes/period';
 import { timelineRouter } from './routes/timeline';
 import { ticTacToeRouter } from './routes/tic-tac-toe';
@@ -71,7 +67,6 @@ app.get('/health', async (_req, res) => {
 });
 
 app.use('/v1/auth', authRouter);
-app.use('/v1/openclaw-public-media', openClawPublicMediaRouter);
 app.use('/v1/ai', requireAuth, aiRouter);
 app.use('/v1/check-ins', requireAuth, checkInsRouter);
 app.use('/v1/events', requireAuth, eventsRouter);
@@ -79,7 +74,6 @@ app.use('/v1/draw-guess', requireAuth, drawGuessRouter);
 app.use('/v1/gacha', requireAuth, gachaRouter);
 app.use('/v1/messages', requireAuth, messagesRouter);
 app.use('/v1/stickers', requireAuth, stickersRouter);
-app.use('/v1/openclaw', requireAuth, openClawRouter);
 app.use('/v1/period', requireAuth, periodRouter);
 app.use('/v1/timeline', requireAuth, timelineRouter);
 app.use('/v1/tic-tac-toe', requireAuth, ticTacToeRouter);

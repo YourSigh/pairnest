@@ -7,8 +7,6 @@
     "dev": "tsx watch src/index.ts",
     "build": "prisma generate && tsc",
     "start": "node dist/index.js",
-    "bridge:openclaw": "node scripts/openclaw-bridge.mjs",
-    "bridge:openclaw:install": "bash scripts/install-openclaw-bridge-launchd.sh",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev"

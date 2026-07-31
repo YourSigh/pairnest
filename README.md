@@ -18,7 +18,7 @@ hosting and multiple spaces are not part of v0.1.
 - Timeline, wishes, anniversaries, and couple check-ins
 - Period tracking
 - Reports, games, gacha, and a shared virtual pet
-- Optional AI chat, audio transcription, and OpenClaw integration
+- Optional AI chat and audio transcription
 
 Optional integrations are disabled until the operator supplies their own
 configuration. A production mobile build does not contain a default PairNest

@@ -10,10 +10,6 @@ const STATIC_ENDPOINTS = {
   aiMessagesStream: "/v1/ai/messages/stream",
   aiMemories: "/v1/ai/memories",
   reports: "/v1/reports",
-  openClawMessages: "/v1/openclaw/messages",
-  openClawMessagesStream: "/v1/openclaw/messages/stream",
-  openClawMessagesStop: "/v1/openclaw/messages/stop",
-  openClawStatus: "/v1/openclaw/status",
   checkIns: "/v1/check-ins",
   checkInsToday: "/v1/check-ins/today",
   relationshipNotification: "/v1/relationship-notification",
@@ -56,18 +52,6 @@ const STATIC_ENDPOINTS = {
 } as const;
 
 const DYNAMIC_ENDPOINTS = {
-  openClawMedia: (token: string) =>
-    InstanceConfigService.apiUrl(
-      `/v1/openclaw/media/${encodeURIComponent(token)}`,
-    ),
-  openClawMediaBrowserLink: (token: string) =>
-    InstanceConfigService.apiUrl(
-      `/v1/openclaw/media/${encodeURIComponent(token)}/browser-link`,
-    ),
-  openClawPublicMedia: (token: string) =>
-    InstanceConfigService.apiUrl(
-      `/v1/openclaw-public-media/${encodeURIComponent(token)}`,
-    ),
   checkInsTodayRole: (role: string) =>
     InstanceConfigService.apiUrl(
       `/v1/check-ins/today/${encodeURIComponent(role)}`,

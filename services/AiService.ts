@@ -51,10 +51,6 @@ type AiStreamHandlers = {
   onDelta?: (content: string) => void;
 };
 
-type OpenClawStreamHandlers = {
-  onUpdate?: (content: string) => void;
-};
-
 function parseSseEvent(block: string) {
   let event = 'message';
   const dataLines: string[] = [];
@@ -132,86 +128,11 @@ class AiServiceImpl {
     );
   }
 
-  async fetchOpenClawMessages(options?: {
-    afterSeq?: number;
-    sessionId?: string;
-  }) {
-    const url = new URL(PAIRNEST_API.openClawMessages);
-    url.searchParams.set("limit", "20");
-    if (typeof options?.afterSeq === "number") {
-      url.searchParams.set("afterSeq", String(options.afterSeq));
-    }
-    if (options?.sessionId) {
-      url.searchParams.set("sessionId", options.sessionId);
-    }
-
-    const response = await AuthService.fetch(url.toString());
-    const data = (await response.json()) as AiMessagesResponse;
-    if (!response.ok || !data.ok) {
-      throw new Error(data.message || "加载 OpenClaw 对话失败");
-    }
-
-    return {
-      configured: Boolean(data.configured),
-      items: data.items ?? [],
-      sessionId: data.sessionId,
-      reset: Boolean(data.reset),
-    };
-  }
-
-  async createOpenClawBrowserLink(mediaToken: string) {
-    const response = await AuthService.fetch(
-      PAIRNEST_API.openClawMediaBrowserLink(mediaToken),
-      { method: "POST" },
-    );
-    const data = (await response.json()) as {
-      ok?: boolean;
-      token?: string;
-      message?: string;
-    };
-    if (!response.ok || !data.ok || !data.token) {
-      throw new Error(data.message || "创建浏览器链接失败");
-    }
-    return PAIRNEST_API.openClawPublicMedia(data.token);
-  }
-
-  async sendOpenClawMessageStream(
-    content: string,
-    handlers: OpenClawStreamHandlers = {},
-  ) {
-    const trimmed = content.trim();
-    if (!trimmed) {
-      throw new Error("消息内容不能为空");
-    }
-
-    return this.sendStreamRequest(
-      PAIRNEST_API.openClawMessagesStream,
-      { content: trimmed },
-      handlers.onUpdate,
-      "OpenClaw",
-    );
-  }
-
-  async stopOpenClawMessage() {
-    const response = await AuthService.fetch(PAIRNEST_API.openClawMessagesStop, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    });
-    const data = (await response.json().catch(() => ({}))) as {
-      ok?: boolean;
-      message?: string;
-    };
-    if (!response.ok || !data.ok) {
-      throw new Error(data.message || "停止 OpenClaw 失败");
-    }
-  }
-
   private async sendStreamRequest(
     url: string,
     body: object,
     onDelta: ((content: string) => void) | undefined,
-    serviceName: "AI" | "OpenClaw",
+    serviceName: "AI",
   ) {
     const token = await AuthService.getAccessToken();
 

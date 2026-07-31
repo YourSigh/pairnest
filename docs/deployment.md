@@ -47,7 +47,7 @@ Important settings:
 | `PAIRNEST_TRUST_PROXY` | Enable only behind a correctly configured proxy |
 | `PAIRNEST_TIMEZONE` | Container timezone; defaults to `UTC` |
 
-AI, transcription, and OpenClaw variables are optional. Blank values keep the
+AI and transcription variables are optional. Blank values keep the
 corresponding external integration disabled.
 
 ## 3. Validate and start

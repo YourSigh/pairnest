@@ -52,7 +52,6 @@ import {
   NotificationService,
 } from "@/services/NotificationService";
 import { NavigationLayoutStorage } from "@/services/NavigationLayoutStorage";
-import { OpenClawStorage } from "@/services/OpenClawStorage";
 import { useRole } from "@/services/RoleContext";
 import { SettingsUnlockStorage } from "@/services/SettingsUnlockStorage";
 import {
@@ -128,7 +127,6 @@ export function SettingsPanel({
   const [voiceDownloadDisplayEnabled, setVoiceDownloadDisplayEnabled] =
     useState(false);
   const [appThemeId, setAppThemeId] = useState<AppThemeId>("blossom");
-  const [openClawDisplayEnabled, setOpenClawDisplayEnabled] = useState(false);
   const [archiveStashEnabled, setArchiveStashEnabled] = useState(false);
   const [archivePreviewEnabled, setArchivePreviewEnabled] = useState(false);
   const [backgroundMessagingEnabled, setBackgroundMessagingEnabled] =
@@ -168,12 +166,6 @@ export function SettingsPanel({
       setArchivePreviewEnabled,
     );
     void AppThemeStorage.load().then(setAppThemeId);
-    const loadOpenClawSettings = () => {
-      void OpenClawStorage.getSettings().then((settings) => {
-        setOpenClawDisplayEnabled(settings.displayEnabled);
-      });
-    };
-    loadOpenClawSettings();
     void ChatReadReceiptDisplayStorage.isEnabled().then(
       setReadReceiptDisplayEnabled,
     );
@@ -199,9 +191,6 @@ export function SettingsPanel({
     const unsubscribeTimelineTheme =
       TimelineThemeStorage.subscribe(setTimelineThemeMode);
     const unsubscribeAppTheme = AppThemeStorage.subscribe(setAppThemeId);
-    const unsubscribeOpenClaw = OpenClawStorage.subscribe(
-      loadOpenClawSettings,
-    );
     const unsubscribeBottomNavigation =
       NavigationLayoutStorage.subscribeBottomNavigation(
         setBottomNavigationIds,
@@ -210,7 +199,6 @@ export function SettingsPanel({
       unsubscribe();
       unsubscribeTimelineTheme();
       unsubscribeAppTheme();
-      unsubscribeOpenClaw();
       unsubscribeBottomNavigation();
     };
   }, [active]);
@@ -326,22 +314,6 @@ export function SettingsPanel({
       });
     } catch {
       toast.show({ message: "主题保存失败，请重试", icon: "alert-circle" });
-    }
-  };
-
-  const handleToggleOpenClawDisplay = async () => {
-    const next = !openClawDisplayEnabled;
-    try {
-      await OpenClawStorage.setDisplayEnabled(next);
-      setOpenClawDisplayEnabled(next);
-      toast.show({
-        message: next
-          ? "AI 聊天中将显示 OpenClaw 模式"
-          : "已隐藏 OpenClaw 模式",
-        icon: "checkmark-circle",
-      });
-    } catch {
-      toast.show({ message: "设置失败，请重试", icon: "alert-circle" });
     }
   };
 
@@ -1179,35 +1151,6 @@ export function SettingsPanel({
               {CHAT_ROLE_LABELS[role]} · 由服务器绑定
             </ThemedText>
           </View>
-          <TouchableOpacity
-            style={[styles.actionRow, styles.optionRowBorder]}
-            onPress={() => void handleToggleOpenClawDisplay()}
-            activeOpacity={0.7}
-            accessibilityRole="switch"
-            accessibilityState={{ checked: openClawDisplayEnabled }}
-          >
-            <View style={styles.settingTextWrap}>
-              <ThemedText style={styles.optionLabel}>
-                显示 OpenClaw 电脑助手
-              </ThemedText>
-              <ThemedText style={styles.settingStatus}>
-                在 AI 聊天页显示普通 AI / OpenClaw 切换按钮
-              </ThemedText>
-            </View>
-            <View
-              style={[
-                styles.switch,
-                openClawDisplayEnabled && styles.switchActive,
-              ]}
-            >
-              <View
-                style={[
-                  styles.switchThumb,
-                  openClawDisplayEnabled && styles.switchThumbActive,
-                ]}
-              />
-            </View>
-          </TouchableOpacity>
           <TouchableOpacity
             style={[styles.actionRow, styles.optionRowBorder]}
             onPress={() => void handleToggleArchiveStash()}

@@ -2,11 +2,6 @@ import type { Server } from 'http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { authenticateAccessToken } from './lib/auth';
 import {
-  authenticateOpenClawBridge,
-  isOpenClawBridgeRequest,
-  registerOpenClawBridge,
-} from './lib/openclaw-bridge';
-import {
   createChatMessage,
   toMessageDtoWithReply,
   type ChatMessageDto,
@@ -20,7 +15,6 @@ import {
 type WsClient = WebSocket & {
   isAlive?: boolean;
   isAuthenticated?: boolean;
-  isOpenClawBridge?: boolean;
   authExpiresAt?: number;
   role?: 'female' | 'male';
   gameRole?: 'female' | 'male';
@@ -197,7 +191,6 @@ export function attachWebSocket(server: Server) {
   wss.on('connection', async (socket: WsClient, request) => {
     socket.isAlive = true;
     socket.isAuthenticated = false;
-    socket.isOpenClawBridge = false;
     socket.role = undefined;
     socket.gameRole = undefined;
 
@@ -211,16 +204,6 @@ export function attachWebSocket(server: Server) {
     socket.on('pong', () => {
       socket.isAlive = true;
     });
-
-    if (isOpenClawBridgeRequest(protocols)) {
-      if (!authenticateOpenClawBridge(request.headers)) {
-        socket.close(4001, 'bridge token invalid');
-        return;
-      }
-      socket.isOpenClawBridge = true;
-      registerOpenClawBridge(socket);
-      return;
-    }
 
     const authProtocol = protocols.find((value) => value.startsWith('access.'));
     const accessToken = authProtocol?.slice('access.'.length);

@@ -1,11 +1,9 @@
 # PairNest roadmap
 
-PairNest v0.1 is intentionally a minimal open-source migration: sanitize and
-isolate the existing app, preserve mature behavior, provide a standalone
-MySQL/API deployment, use runtime server configuration, and stop trusting
-client-claimed partner roles.
+PairNest v0.1 focuses on a stable self-hosted experience for one couple, with a
+standalone MySQL/API deployment and runtime server configuration.
 
-The following work is deliberately outside the v0.1 migration:
+The following work is not currently included:
 
 - Multi-tenant hosting
 - A complete `PairSpace` domain abstraction
@@ -22,7 +20,6 @@ The following work is deliberately outside the v0.1 migration:
 - A full rewrite of legacy `female` / `male` database fields
 - A universal feature-capability system
 - Large directory-layout changes
-- Refactors unrelated to open-source safety
 
 Potential follow-up priorities:
 

@@ -1,5 +1,7 @@
 # PairNest v0.1 deployment
 
+[简体中文](deployment.zh-CN.md)
+
 This guide deploys one PairNest instance for one couple. The included Compose
 stack contains MySQL, a one-shot Prisma migration service, and the API. It does
 not include a reverse proxy, automatic HTTPS, or a container registry workflow.

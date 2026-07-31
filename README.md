@@ -4,68 +4,59 @@
 
 [简体中文](README.zh-CN.md)
 
-PairNest (双栖) is an Expo React Native app with a self-hosted
-Express/Prisma/MySQL API. Version 0.1 keeps the existing couple-focused
-features while removing the original private deployment, personal data, and
-server addresses.
-
-One PairNest deployment is intentionally designed for one couple. Multi-user
-hosting and multiple spaces are not part of v0.1.
+PairNest combines an Expo React Native client with a self-hosted
+Express, Prisma, and MySQL API. One deployment serves one couple; it is not a
+multi-tenant service.
 
 ## Features
 
-- Private chat with image, audio, video, and sticker support
+- Private chat with text, images, audio, video, stickers, and read receipts
 - Timeline, wishes, anniversaries, and couple check-ins
-- Period tracking
-- Reports, games, gacha, and a shared virtual pet
+- Period tracking and relationship reports
+- Two-player games, gacha, and a shared virtual pet
 - Optional AI chat and audio transcription
+- Custom app colors, timeline scenes, chat backgrounds, and bottom navigation
 
-Optional integrations are disabled until the operator supplies their own
-configuration. A production mobile build does not contain a default PairNest
-server address.
+## Start the backend
 
-## Quick start
-
-Requirements:
-
-- Docker Engine with Docker Compose v2
-- An HTTPS reverse proxy for an Internet-facing deployment
+Install Docker Engine and Docker Compose v2, then:
 
 ```bash
 cp .env.example .env
 ```
 
-Open `.env`, set the four required secret values, then start the stack:
+Set `PAIRNEST_DB_PASSWORD`, `PAIRNEST_DB_ROOT_PASSWORD`,
+`PAIRNEST_APP_SHARED_SECRET`, and `PAIRNEST_AUTH_TOKEN_SECRET` to independent
+random values. Start and verify the stack:
 
 ```bash
+docker compose config
 docker compose up -d
 docker compose ps
 curl http://127.0.0.1:4000/health
 ```
 
-The stack contains MySQL, a one-shot Prisma migration service, and the API.
-Database and uploaded files are stored in named Docker volumes.
+Use an HTTPS reverse proxy before exposing the API to the Internet. See
+[Backend deployment](docs/deployment.md) for networking, persistence, backups,
+updates, and troubleshooting.
 
-See [Deployment](docs/deployment.md) for configuration, networking, updates,
-and troubleshooting.
+## Run and build the app
 
-## Mobile development
-
-Requirements:
-
-- Node.js 20
-- npm
-- Java 17 and the Android SDK for Android native builds
+Local development requires Node.js 20 and npm. Android native builds also need
+Java 17, Android Studio, and the Android SDK.
 
 ```bash
 npm ci
+npm run typecheck
 npm run lint
-npx tsc --noEmit
 npm run android
 ```
 
-Set the PairNest instance URL through the app's runtime server configuration.
-Use HTTPS outside a trusted development LAN.
+The app asks for the PairNest backend URL on first launch. Use HTTPS outside a
+trusted development network.
+
+See [App builds](docs/app-build.md) for Android APK/AAB, iOS, EAS cloud builds,
+and local builds.
 
 ## Server development
 
@@ -76,25 +67,17 @@ npm run build
 npm run dev
 ```
 
-A local server also requires `PAIRNEST_DATABASE_URL` and the authentication environment
-variables documented in [Deployment](docs/deployment.md).
+Local server development requires `PAIRNEST_DATABASE_URL`,
+`PAIRNEST_APP_SHARED_SECRET`, and `PAIRNEST_AUTH_TOKEN_SECRET`. Docker Compose
+is the simplest option for most contributors.
 
 ## Privacy and security
 
-PairNest stores highly sensitive relationship, health, chat, and media data.
-Read [Privacy](docs/privacy.md) before exposing an instance to the Internet or
-enabling a third-party AI/transcription service.
+PairNest stores sensitive relationship, health, chat, and media data. Read
+[Privacy](docs/privacy.md) before exposing an instance to the Internet or
+enabling third-party AI/transcription services.
 
-Please follow [SECURITY.md](SECURITY.md) to report security issues privately.
-
-## Project status
-
-PairNest v0.1 focuses on safe separation from the original private app,
-self-hosted deployment, and preservation of existing behavior. Larger product
-and infrastructure changes are listed in [Roadmap](ROADMAP.md).
-
-The migration and verification record is in
-[OPEN_SOURCE_MIGRATION_REPORT.md](OPEN_SOURCE_MIGRATION_REPORT.md).
+Report security issues privately as described in [SECURITY.md](SECURITY.md).
 
 ## License
 

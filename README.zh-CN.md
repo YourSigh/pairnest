@@ -4,64 +4,64 @@
 
 [English](README.md)
 
-PairNest 是一个 Expo React Native 客户端，以及可自行部署的
-Express/Prisma/MySQL 服务端。v0.1 在尽量保留现有成熟功能的同时，移除原私人项目的
-个人数据、私人部署配置和服务器地址。
-
-PairNest v0.1 明确采用“一套实例只服务一对情侣”的设计，不支持多租户或多个空间。
+PairNest 包含一个 Expo React Native 客户端，以及一个基于
+Express、Prisma 和 MySQL 的自托管服务端。一套实例只服务一对伴侣，不支持多租户或
+多个独立空间。
 
 ## 功能
 
-- 支持图片、语音、视频和表情的私密聊天
+- 支持文字、图片、语音、视频、表情和已读状态的私密聊天
 - 时间线、愿望、纪念日和情侣打卡
-- 生理期记录
-- 报告、游戏、扭蛋和共享虚拟宠物
+- 生理期记录与关系报告
+- 双人游戏、扭蛋和共享虚拟宠物
 - 可选的 AI 对话和语音转写
+- App 主题色、时间线场景、聊天背景和底部导航自定义
 
-所有第三方集成只有在部署者主动配置后才会启用。正式移动端构建不会内置默认
-PairNest 服务器地址。
+## 快速启动后端
 
-## 快速开始
-
-需要：
-
-- Docker Engine 与 Docker Compose v2
-- 公网部署时自行准备 HTTPS 反向代理
+准备 Docker Engine 和 Docker Compose v2，然后执行：
 
 ```bash
 cp .env.example .env
 ```
 
-打开 `.env`，填写四个必需的密码或密钥，然后启动：
+编辑 `.env`，至少填写以下四项：
+
+```dotenv
+PAIRNEST_DB_PASSWORD=
+PAIRNEST_DB_ROOT_PASSWORD=
+PAIRNEST_APP_SHARED_SECRET=
+PAIRNEST_AUTH_TOKEN_SECRET=
+```
+
+可以用 `openssl rand -hex 32` 分别生成独立的值。随后启动并检查服务：
 
 ```bash
+docker compose config
 docker compose up -d
 docker compose ps
 curl http://127.0.0.1:4000/health
 ```
 
-Compose 栈包含 MySQL、一次性 Prisma migration 服务和 API。数据库与上传文件保存
-在 Docker named volumes 中。
+公网部署必须在 API 前配置 HTTPS 反向代理。完整的端口、反向代理、持久化、备份、
+更新和故障排查说明见[后端部署文档](docs/deployment.zh-CN.md)。
 
-配置、联网、升级和故障排查请阅读[部署文档](docs/deployment.md)。
+## 运行和打包 App
 
-## 移动端开发
-
-需要：
-
-- Node.js 20
-- npm
-- Android 原生构建还需要 Java 17 和 Android SDK
+本地开发需要 Node.js 20 和 npm；Android 原生构建还需要 Java 17、Android Studio
+和 Android SDK。
 
 ```bash
 npm ci
+npm run typecheck
 npm run lint
-npx tsc --noEmit
 npm run android
 ```
 
-请在 App 的运行时服务器配置中填写 PairNest 实例地址。除可信开发局域网外，应当使用
-HTTPS。
+App 首次启动时会要求填写 PairNest 后端地址。公网环境请填写 HTTPS 地址。
+
+Android APK、商店 AAB、iOS 包、EAS 云构建和本地构建的完整流程见
+[App 打包文档](docs/app-build.zh-CN.md)。
 
 ## 服务端开发
 
@@ -72,22 +72,15 @@ npm run build
 npm run dev
 ```
 
-本地服务端还需要 `PAIRNEST_DATABASE_URL` 及[部署文档](docs/deployment.md)中列出的认证环境变量。
+本地开发需要自行提供 `PAIRNEST_DATABASE_URL`、`PAIRNEST_APP_SHARED_SECRET` 和
+`PAIRNEST_AUTH_TOKEN_SECRET`。使用 Docker Compose 通常更省事。
 
 ## 隐私与安全
 
-PairNest 会保存高度敏感的关系、健康、聊天和媒体数据。在把实例暴露到互联网或启用
-第三方 AI、语音转写服务前，请阅读[隐私说明](docs/privacy.md)。
+PairNest 会保存关系、健康、聊天和媒体等敏感数据。把实例暴露到公网或启用第三方
+AI、语音转写服务前，请阅读[隐私说明](docs/privacy.md)。
 
-安全问题请按照 [SECURITY.md](SECURITY.md) 中的方式私下报告。
-
-## 项目状态
-
-PairNest v0.1 的重点是与原私人 App 安全隔离、支持自托管并保留现有行为。更大的产品
-和基础设施改造记录在 [Roadmap](ROADMAP.md)。
-
-迁移范围与验证记录见
-[OPEN_SOURCE_MIGRATION_REPORT.md](OPEN_SOURCE_MIGRATION_REPORT.md)。
+安全问题请按照 [SECURITY.md](SECURITY.md) 私下报告。
 
 ## 许可证
 
@@ -95,5 +88,5 @@ Copyright (C) 2026 yoursigh。
 
 PairNest 采用
 [GNU Affero General Public License v3.0 only](LICENSE)（`AGPL-3.0-only`）。
-任何修改 PairNest 并通过网络向用户提供服务的部署者，都需要遵守该许可证关于提供
-对应源代码的要求。
+修改 PairNest 并通过网络向用户提供服务时，需要遵守该许可证关于提供对应源代码的
+要求。

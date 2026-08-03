@@ -15,6 +15,7 @@ import { Image } from "expo-image";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import * as MediaLibrary from "expo-media-library";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
+import * as Sharing from "expo-sharing";
 import { useVideoPlayer, VideoView } from "expo-video";
 import * as VideoThumbnails from "expo-video-thumbnails";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -3742,17 +3743,56 @@ export default function ChatScreen() {
   const handleDownloadMessage = async (message: ChatMessage) => {
     closeMessageMenu();
     if (message.recalledAt) return;
+    let localUri: string | null = null;
     try {
-      await ChatService.downloadVoiceMessage(message);
-      toast.show({
-        message: "语音已保存到 App 文件夹",
-        icon: "checkmark-circle",
+      const downloaded = await ChatService.downloadVoiceMessage(message);
+      localUri = downloaded.localUri;
+
+      if (Platform.OS === "android") {
+        const permission =
+          await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+        if (!permission.granted) return;
+        const baseName =
+          downloaded.fileName
+            .replace(/[\\/:*?"<>|]/g, "_")
+            .replace(/\.[^.]+$/, "") || "voice";
+        const destination =
+          await FileSystem.StorageAccessFramework.createFileAsync(
+            permission.directoryUri,
+            baseName,
+            downloaded.mimeType,
+          );
+        const data = await FileSystem.readAsStringAsync(downloaded.localUri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        await FileSystem.StorageAccessFramework.writeAsStringAsync(
+          destination,
+          data,
+          { encoding: FileSystem.EncodingType.Base64 },
+        );
+        toast.show({ message: "语音已保存", icon: "checkmark-circle" });
+        return;
+      }
+
+      if (!(await Sharing.isAvailableAsync())) {
+        throw new Error("当前设备不支持保存到文件");
+      }
+      await Sharing.shareAsync(downloaded.localUri, {
+        dialogTitle: "存储语音到“文件”",
+        mimeType: downloaded.mimeType,
+        UTI: "public.audio",
       });
     } catch (error) {
       toast.show({
         message: error instanceof Error ? error.message : "下载语音失败",
         icon: "alert-circle",
       });
+    } finally {
+      if (localUri) {
+        await FileSystem.deleteAsync(localUri, { idempotent: true }).catch(
+          () => undefined,
+        );
+      }
     }
   };
 

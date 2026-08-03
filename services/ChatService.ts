@@ -1184,7 +1184,11 @@ class ChatServiceImpl {
     return item;
   }
 
-  async downloadVoiceMessage(message: ChatMessage) {
+  async downloadVoiceMessage(message: ChatMessage): Promise<{
+    localUri: string;
+    fileName: string;
+    mimeType: string;
+  }> {
     if (message.type !== 'voice' || !message.audio) {
       throw new Error('语音消息无效');
     }
@@ -1192,8 +1196,17 @@ class ChatServiceImpl {
       throw new Error('无法访问本机缓存目录');
     }
 
+    const extension =
+      message.audio.fileName.match(/(\.[a-zA-Z0-9]+)$/)?.[1] || '.m4a';
+    const safeCreatedAt = new Date(message.createdAt)
+      .toISOString()
+      .replace(/[:.]/g, '-');
+    const safeMessageId = message.id.replace(/[^a-zA-Z0-9_-]/g, '-');
+    const fileName = `voice-${safeCreatedAt}-${safeMessageId}${extension}`;
+    const localUri = `${FileSystem.cacheDirectory}${fileName}`;
     const token = await AuthService.getAccessToken();
-    const localUri = `${FileSystem.cacheDirectory}${message.audio.fileName}`;
+
+    await FileSystem.deleteAsync(localUri, { idempotent: true });
     const result = await FileSystem.downloadAsync(
       `${PAIRNEST_API.messageAudio(message.id)}?download=1`,
       localUri,
@@ -1208,28 +1221,11 @@ class ChatServiceImpl {
       throw new Error(`下载语音失败（${result.status}）`);
     }
 
-    try {
-      if (!FileSystem.documentDirectory) {
-        throw new Error('无法访问本机文件目录');
-      }
-      const extension =
-        message.audio.fileName.match(/(\.[a-zA-Z0-9]+)$/)?.[1] || '.m4a';
-      const safeCreatedAt = new Date(message.createdAt)
-        .toISOString()
-        .replace(/[:.]/g, '-');
-      const safeMessageId = message.id.replace(/[^a-zA-Z0-9_-]/g, '-');
-      const targetDirectory = `${FileSystem.documentDirectory}chat-voices/`;
-      const targetUri = `${targetDirectory}voice-${safeCreatedAt}-${safeMessageId}${extension}`;
-
-      await FileSystem.makeDirectoryAsync(targetDirectory, {
-        intermediates: true,
-      });
-      await FileSystem.deleteAsync(targetUri, { idempotent: true });
-      await FileSystem.copyAsync({ from: localUri, to: targetUri });
-      return targetUri;
-    } finally {
-      await FileSystem.deleteAsync(localUri, { idempotent: true });
-    }
+    return {
+      localUri,
+      fileName,
+      mimeType: message.audio.mimeType || 'audio/mp4',
+    };
   }
 
   private setStatus(status: ConnectionStatus) {

@@ -270,7 +270,7 @@ class ChatServiceImpl {
   private ticTacToeEmoteListeners = new Set<TicTacToeEmoteListener>();
   private ticTacToeRole: ChatRole | null = null;
   private statusListeners = new Set<StatusListener>();
-  private messageFetches = new Map<string, Promise<ChatMessage[]>>();
+  private messageFetches = new Map<string, Promise<ChatMessagePage>>();
   private mediaDownloads = new Map<string, Promise<string>>();
   private unreadCountFetches = new Map<ChatRole, Promise<number>>();
   private status: ConnectionStatus = 'disconnected';
@@ -517,9 +517,14 @@ class ChatServiceImpl {
     return true;
   }
 
-  async fetchMessages(options?: { before?: string; after?: string }): Promise<ChatMessage[]> {
+  async fetchMessagesPage(options?: {
+    before?: string;
+    after?: string;
+    limit?: number;
+  }): Promise<ChatMessagePage> {
     const url = new URL(PAIRNEST_API.messages);
-    url.searchParams.set('limit', '50');
+    const limit = options?.limit ?? 50;
+    url.searchParams.set('limit', String(limit));
     if (options?.before) {
       url.searchParams.set('before', options.before);
     }
@@ -537,7 +542,16 @@ class ChatServiceImpl {
       if (!response.ok || !data.ok) {
         throw new Error(data.message || '加载消息失败');
       }
-      return this.hydrateGachaShareMessages(data.items as ChatMessage[]);
+      const page = pageFromResponse(data);
+      return {
+        ...page,
+        // 兼容尚未返回 hasMore 的旧服务端；多请求一页即可最终收敛为 false。
+        hasMore:
+          typeof data.hasMore === 'boolean'
+            ? data.hasMore
+            : page.items.length >= limit,
+        items: await this.hydrateGachaShareMessages(page.items),
+      };
     })();
     this.messageFetches.set(requestUrl, request);
     try {
@@ -547,6 +561,14 @@ class ChatServiceImpl {
         this.messageFetches.delete(requestUrl);
       }
     }
+  }
+
+  async fetchMessages(options?: {
+    before?: string;
+    after?: string;
+  }): Promise<ChatMessage[]> {
+    const page = await this.fetchMessagesPage(options);
+    return page.items;
   }
 
   async fetchMessage(messageId: string): Promise<ChatMessage> {

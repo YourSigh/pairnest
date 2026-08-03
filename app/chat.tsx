@@ -31,6 +31,8 @@ import {
   type LayoutChangeEvent,
   LayoutAnimation,
   Modal,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Platform,
   Pressable,
   type ScrollViewProps,
@@ -2533,6 +2535,8 @@ export default function ChatScreen() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const [loadingNewer, setLoadingNewer] = useState(false);
+  const [hasMoreNewer, setHasMoreNewer] = useState(false);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [sendingMediaLabel, setSendingMediaLabel] = useState<string | null>(
@@ -2594,6 +2598,11 @@ export default function ChatScreen() {
     Set<string>
   >(() => new Set());
   const messagesRef = useRef<ChatMessage[]>([]);
+  const hasMoreNewerRef = useRef(false);
+  const loadingNewerRef = useRef(false);
+  const pendingWindowMessagesRef = useRef<ChatMessage[]>([]);
+  const returningToLatestRef = useRef(false);
+  const canLoadNewerRef = useRef(false);
   const roleRef = useRef<ChatRole>(role);
   roleRef.current = role;
   const favoriteOwnerRoleRef = useRef<ChatRole>(role);
@@ -2608,6 +2617,7 @@ export default function ChatScreen() {
   const searchInputRef = useRef<TextInput>(null);
   const searchRequestSeqRef = useRef(0);
   const favoriteRequestSeqRef = useRef(0);
+  const messageWindowSeqRef = useRef(0);
   const hasLoadedRef = useRef(false);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const entryAnimationCleanupTimersRef = useRef<
@@ -2900,53 +2910,150 @@ export default function ChatScreen() {
   }, []);
 
   const loadInitial = useCallback(async (silent = false) => {
+    const requestSeq = messageWindowSeqRef.current + 1;
+    messageWindowSeqRef.current = requestSeq;
+    loadingNewerRef.current = false;
+    setLoadingMore(false);
+    setLoadingNewer(false);
     try {
       if (!silent) setLoading(true);
-      const items = await ChatService.fetchMessages();
-      setMessages((prev) => {
-        if (
-          prev.length === items.length &&
-          prev.length > 0 &&
-          prev[prev.length - 1]?.id === items[items.length - 1]?.id
-        ) {
-          return prev;
-        }
-        return items;
-      });
-      setHasMore(items.length >= 50);
+      const page = await ChatService.fetchMessagesPage({ limit: 50 });
+      if (messageWindowSeqRef.current !== requestSeq) return;
+      messagesRef.current = page.items;
+      setMessages(page.items);
+      setHasMore(page.hasMore);
+      hasMoreNewerRef.current = false;
+      loadingNewerRef.current = false;
+      pendingWindowMessagesRef.current = [];
+      canLoadNewerRef.current = false;
+      setHasMoreNewer(false);
+      setLoadingNewer(false);
       hasLoadedRef.current = true;
-      void markLatestPartnerMessageRead(items, roleRef.current);
+      void markLatestPartnerMessageRead(page.items, roleRef.current);
     } catch (error) {
+      if (messageWindowSeqRef.current !== requestSeq) return;
       console.error("Error loading messages:", error);
       toast.show({ message: "加载消息失败", icon: "alert-circle" });
     } finally {
-      if (!silent) setLoading(false);
+      if (!silent && messageWindowSeqRef.current === requestSeq) {
+        setLoading(false);
+      }
     }
   }, [markLatestPartnerMessageRead, toast]);
 
   const loadMore = useCallback(async () => {
-    if (loadingMore || !hasMore || messages.length === 0) return;
+    const currentMessages = messagesRef.current;
+    if (loadingMore || !hasMore || currentMessages.length === 0) return;
 
+    const requestSeq = messageWindowSeqRef.current;
     try {
       setLoadingMore(true);
-      const oldest = messages[0];
-      const items = await ChatService.fetchMessages({ before: oldest.createdAt });
-      if (items.length === 0) {
-        setHasMore(false);
-        return;
-      }
-      setMessages((prev) => mergeMessagesWithReplyUpdates(prev, items));
-      if (items.length < 50) {
-        setHasMore(false);
-      }
+      const oldest = currentMessages[0];
+      const page = await ChatService.fetchMessagesPage({
+        before: oldest.createdAt,
+        limit: 50,
+      });
+      if (messageWindowSeqRef.current !== requestSeq) return;
+      const nextMessages = mergeMessagesWithReplyUpdates(
+        messagesRef.current,
+        page.items,
+      );
+      messagesRef.current = nextMessages;
+      setMessages(nextMessages);
+      setHasMore(page.hasMore);
     } catch (error) {
+      if (messageWindowSeqRef.current !== requestSeq) return;
       console.error("Error loading older messages:", error);
     } finally {
-      setLoadingMore(false);
+      if (messageWindowSeqRef.current === requestSeq) {
+        setLoadingMore(false);
+      }
     }
-  }, [hasMore, loadingMore, messages]);
+  }, [hasMore, loadingMore]);
+
+  const loadNewer = useCallback(async () => {
+    const currentMessages = messagesRef.current;
+    if (
+      loadingNewerRef.current ||
+      !hasMoreNewerRef.current ||
+      currentMessages.length === 0
+    ) {
+      return;
+    }
+
+    const requestSeq = messageWindowSeqRef.current;
+    const newest = currentMessages[currentMessages.length - 1];
+    loadingNewerRef.current = true;
+    setLoadingNewer(true);
+    try {
+      const page = await ChatService.fetchMessagesPage({
+        after: newest.createdAt,
+        limit: 50,
+      });
+      if (messageWindowSeqRef.current !== requestSeq) return;
+
+      const pending = page.hasMore ? [] : pendingWindowMessagesRef.current;
+      const nextMessages = mergeMessagesWithReplyUpdates(
+        messagesRef.current,
+        [...page.items, ...pending],
+      );
+      messagesRef.current = nextMessages;
+      setMessages(nextMessages);
+
+      // 新消息会插入倒置列表的数据头部；重新锚定原来的窗口末尾，
+      // 避免一次分页后直接跳到新页末尾，看起来像漏掉了中间消息。
+      const anchorIndex = nextMessages.findIndex(
+        (message) => message.id === newest.id,
+      );
+      if (anchorIndex >= 0 && page.items.length > 0) {
+        const invertedAnchorIndex = nextMessages.length - 1 - anchorIndex;
+        const restoreAnchor = () => {
+          try {
+            listRef.current?.scrollToIndex({
+              index: invertedAnchorIndex,
+              viewPosition: 0.5,
+              animated: false,
+            });
+          } catch {
+            // onScrollToIndexFailed 会在尚未测量完成时继续兜底。
+          }
+        };
+        requestAnimationFrame(restoreAnchor);
+        setTimeout(restoreAnchor, 120);
+      }
+
+      hasMoreNewerRef.current = page.hasMore;
+      setHasMoreNewer(page.hasMore);
+      if (!page.hasMore) {
+        pendingWindowMessagesRef.current = [];
+        void markLatestPartnerMessageRead(nextMessages, roleRef.current);
+      }
+    } catch (error) {
+      if (messageWindowSeqRef.current !== requestSeq) return;
+      console.error("Error loading newer messages:", error);
+    } finally {
+      if (messageWindowSeqRef.current === requestSeq) {
+        loadingNewerRef.current = false;
+        setLoadingNewer(false);
+      }
+    }
+  }, [markLatestPartnerMessageRead]);
+
+  const handleMessageListScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (
+        canLoadNewerRef.current &&
+        hasMoreNewerRef.current &&
+        event.nativeEvent.contentOffset.y <= 220
+      ) {
+        void loadNewer();
+      }
+    },
+    [loadNewer],
+  );
 
   const syncNewMessages = useCallback(async () => {
+    if (hasMoreNewerRef.current) return;
     if (syncingNewMessagesRef.current) return;
     syncingNewMessagesRef.current = true;
     try {
@@ -2969,6 +3076,8 @@ export default function ChatScreen() {
         if (initialHydration) {
           hasLoadedRef.current = true;
           setHasMore(items.length >= 50);
+          hasMoreNewerRef.current = false;
+          setHasMoreNewer(false);
         }
         if (items.length > 0) {
           if (!initialHydration) markMessagesForEntryAnimation(items);
@@ -3062,9 +3171,40 @@ export default function ChatScreen() {
       const unsubscribeMessages = ChatService.subscribeMessages((message) => {
         const currentRole = roleRef.current;
         const mine = message.sender === currentRole;
-        markMessagesForEntryAnimation([message]);
+        const currentMessages = messagesRef.current;
+        const existingMessage = currentMessages.some(
+          (item) => item.id === message.id,
+        );
+        const latestMessage = currentMessages[currentMessages.length - 1];
+        const isChronologicallyNew =
+          !existingMessage &&
+          (!latestMessage ||
+            new Date(message.createdAt).getTime() >=
+              new Date(latestMessage.createdAt).getTime());
+
+        if (hasMoreNewerRef.current && !existingMessage) {
+          pendingWindowMessagesRef.current = mergeMessagesWithReplyUpdates(
+            pendingWindowMessagesRef.current,
+            [message],
+          );
+          if (mine && isChronologicallyNew && !returningToLatestRef.current) {
+            returningToLatestRef.current = true;
+            void loadInitial(true)
+              .then(() => {
+                requestAnimationFrame(() => scrollToBottom(true));
+              })
+              .finally(() => {
+                returningToLatestRef.current = false;
+              });
+          }
+          return;
+        }
+
+        if (isChronologicallyNew) {
+          markMessagesForEntryAnimation([message]);
+        }
         const nextMessages = mergeMessagesWithReplyUpdates(
-          messagesRef.current,
+          currentMessages,
           [message],
         );
         messagesRef.current = nextMessages;
@@ -3076,10 +3216,10 @@ export default function ChatScreen() {
             favoriteOwnerRoleRef.current,
           ),
         );
-        if (mine || isNearBottomRef.current) {
+        if (isChronologicallyNew && (mine || isNearBottomRef.current)) {
           scrollToBottom(true);
         }
-        if (!mine) {
+        if (!mine && isChronologicallyNew) {
           void markLatestPartnerMessageRead(nextMessages, currentRole);
         }
       });
@@ -3876,6 +4016,41 @@ export default function ChatScreen() {
     return true;
   }, []);
 
+  const loadMessageContext = useCallback(async (target: ChatMessage) => {
+    const requestSeq = messageWindowSeqRef.current + 1;
+    messageWindowSeqRef.current = requestSeq;
+    loadingNewerRef.current = false;
+    pendingWindowMessagesRef.current = [];
+    canLoadNewerRef.current = false;
+    setLoadingMore(false);
+    setLoadingNewer(false);
+
+    const [olderPage, newerPage] = await Promise.all([
+      ChatService.fetchMessagesPage({
+        before: target.createdAt,
+        limit: 50,
+      }),
+      ChatService.fetchMessagesPage({
+        after: target.createdAt,
+        limit: 50,
+      }),
+    ]);
+    if (messageWindowSeqRef.current !== requestSeq) return null;
+
+    const nextMessages = mergeMessagesWithReplyUpdates([], [
+      ...olderPage.items,
+      target,
+      ...newerPage.items,
+    ]);
+    messagesRef.current = nextMessages;
+    setMessages(nextMessages);
+    setHasMore(olderPage.hasMore);
+    hasMoreNewerRef.current = newerPage.hasMore;
+    setHasMoreNewer(newerPage.hasMore);
+    hasLoadedRef.current = true;
+    return nextMessages;
+  }, []);
+
   const openSearch = () => {
     setSearchVisible(true);
     setSearchQuery("");
@@ -3994,23 +4169,14 @@ export default function ChatScreen() {
     closeSearch();
 
     try {
-      let nextMessages = messagesRef.current;
-      if (!nextMessages.some((item) => item.id === message.id)) {
-        const [before, after] = await Promise.all([
-          ChatService.fetchMessages({ before: message.createdAt }),
-          ChatService.fetchMessages({ after: message.createdAt }),
-        ]);
-        nextMessages = mergeMessagesWithReplyUpdates(nextMessages, [
-          message,
-          ...before,
-          ...after,
-        ]);
-        messagesRef.current = nextMessages;
-        setMessages(nextMessages);
-      }
+      const currentMessages = messagesRef.current;
+      const nextMessages = currentMessages.some((item) => item.id === message.id)
+        ? currentMessages
+        : await loadMessageContext(message);
+      if (!nextMessages) return;
 
       setTimeout(() => {
-        scrollToMessage(message.id, messagesRef.current);
+        scrollToMessage(message.id, nextMessages);
       }, 120);
     } catch (error) {
       toast.show({
@@ -4040,23 +4206,16 @@ export default function ChatScreen() {
 
         try {
           const target = await ChatService.fetchMessage(quote.replyToMessageId);
-          let nextMessages = messagesRef.current;
-          if (!nextMessages.some((item) => item.id === target.id)) {
-            const [before, after] = await Promise.all([
-              ChatService.fetchMessages({ before: target.createdAt }),
-              ChatService.fetchMessages({ after: target.createdAt }),
-            ]);
-            nextMessages = mergeMessagesWithReplyUpdates(nextMessages, [
-              target,
-              ...before,
-              ...after,
-            ]);
-            messagesRef.current = nextMessages;
-            setMessages(nextMessages);
-          }
+          const currentMessages = messagesRef.current;
+          const nextMessages = currentMessages.some(
+            (item) => item.id === target.id,
+          )
+            ? currentMessages
+            : await loadMessageContext(target);
+          if (!nextMessages) return;
 
           setTimeout(() => {
-            scrollToMessage(target.id, messagesRef.current);
+            scrollToMessage(target.id, nextMessages);
           }, 120);
         } catch (error) {
           toast.show({
@@ -4088,7 +4247,7 @@ export default function ChatScreen() {
 
       scrollToMessage(target.id, list);
     },
-    [scrollToMessage, toast],
+    [loadMessageContext, scrollToMessage, toast],
   );
 
   const focusTextComposer = useCallback(() => {
@@ -4302,6 +4461,17 @@ export default function ChatScreen() {
                 closeEmojiPanel();
               }}
               scrollEventThrottle={16}
+              onScroll={handleMessageListScroll}
+              onScrollBeginDrag={(event) => {
+                if (hasMoreNewerRef.current) {
+                  canLoadNewerRef.current = true;
+                  if (event.nativeEvent.contentOffset.y <= 220) {
+                    void loadNewer();
+                  }
+                }
+              }}
+              onScrollEndDrag={handleMessageListScroll}
+              onMomentumScrollEnd={handleMessageListScroll}
               contentContainerStyle={[
                 styles.listContent,
                 messages.length === 0 && styles.listContentEmpty,
@@ -4325,6 +4495,19 @@ export default function ChatScreen() {
                 loadingMore ? (
                   <View style={styles.loadMoreButton}>
                     <ActivityIndicator size="small" color={AppColors.primary} />
+                  </View>
+                ) : null
+              }
+              ListHeaderComponent={
+                loadingNewer ? (
+                  <View style={styles.loadMoreButton}>
+                    <ActivityIndicator size="small" color={AppColors.primary} />
+                  </View>
+                ) : hasMoreNewer ? (
+                  <View style={styles.loadMoreButton}>
+                    <ThemedText style={styles.loadMoreText}>
+                      继续向下滑动加载更新消息
+                    </ThemedText>
                   </View>
                 ) : null
               }

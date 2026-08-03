@@ -832,34 +832,60 @@ messagesRouter.get('/:id', async (req, res) => {
 
 messagesRouter.get('/', async (req, res) => {
   const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
-  const before =
+  const beforeValue =
     typeof req.query.before === 'string' && req.query.before.trim()
       ? req.query.before.trim()
       : undefined;
-  const after =
+  const afterValue =
     typeof req.query.after === 'string' && req.query.after.trim()
       ? req.query.after.trim()
       : undefined;
+  const before = beforeValue ? new Date(beforeValue) : undefined;
+  const after = afterValue ? new Date(afterValue) : undefined;
 
-  if (after) {
-    const items = await prisma.chatMessage.findMany({
-      where: { createdAt: { gt: new Date(after) } },
-      orderBy: { createdAt: 'asc' },
-      take: limit,
-    });
-    res.json({ ok: true, items: await toMessageDtos(items) });
+  if (
+    (before && Number.isNaN(before.getTime())) ||
+    (after && Number.isNaN(after.getTime()))
+  ) {
+    res.status(400).json({ ok: false, message: '消息分页游标无效' });
+    return;
+  }
+  if (before && after) {
+    res.status(400).json({ ok: false, message: 'before 和 after 不能同时使用' });
     return;
   }
 
-  const where = before ? { createdAt: { lt: new Date(before) } } : undefined;
+  if (after) {
+    const items = await prisma.chatMessage.findMany({
+      where: { createdAt: { gt: after } },
+      orderBy: { createdAt: 'asc' },
+      take: limit + 1,
+    });
+    const pageItems = items.slice(0, limit);
+    res.json({
+      ok: true,
+      items: await toMessageDtos(pageItems),
+      hasMore: items.length > limit,
+      nextCursor: pageItems.at(-1)?.createdAt.toISOString() ?? null,
+    });
+    return;
+  }
+
+  const where = before ? { createdAt: { lt: before } } : undefined;
 
   const items = await prisma.chatMessage.findMany({
     where,
     orderBy: { createdAt: 'desc' },
-    take: limit,
+    take: limit + 1,
   });
+  const pageItems = items.slice(0, limit).reverse();
 
-  res.json({ ok: true, items: await toMessageDtos(items.reverse()) });
+  res.json({
+    ok: true,
+    items: await toMessageDtos(pageItems),
+    hasMore: items.length > limit,
+    nextCursor: pageItems[0]?.createdAt.toISOString() ?? null,
+  });
 });
 
 messagesRouter.post('/', async (req, res) => {

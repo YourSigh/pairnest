@@ -138,6 +138,27 @@ Enabling AI or transcription can send prompts, relationship history, titles,
 memories, or raw audio to the configured third party. Read
 [privacy.md](privacy.md) first.
 
+PairNest supports the traditional OpenAI-compatible `audio/transcriptions`
+endpoint and the Qwen3-ASR-Flash-compatible `chat/completions` endpoint. Select
+one with `PAIRNEST_TRANSCRIPTION_API_MODE`:
+
+```dotenv
+# Traditional multipart upload
+PAIRNEST_TRANSCRIPTION_API_MODE=audio-transcriptions
+PAIRNEST_TRANSCRIPTION_API_URL=https://provider.example/v1/audio/transcriptions
+PAIRNEST_TRANSCRIPTION_API_KEY=replace-me
+PAIRNEST_TRANSCRIPTION_MODEL=whisper-1
+
+# Or Qwen-compatible chat completions
+PAIRNEST_TRANSCRIPTION_API_MODE=qwen-chat-completions
+PAIRNEST_TRANSCRIPTION_API_URL=https://workspace.example/compatible-mode/v1
+PAIRNEST_TRANSCRIPTION_API_KEY=replace-me
+PAIRNEST_TRANSCRIPTION_MODEL=qwen3-asr-flash
+```
+
+The Qwen URL may be either the API base or the complete `/chat/completions`
+URL. Keep all real provider URLs, workspace identifiers, and keys in `.env`.
+
 AI context directories are not mounted by the default Compose file. If you
 choose to use one, add an explicit read-only bind mount in a private Compose
 override and set `PAIRNEST_AI_CONTEXT_DIR` to the matching path inside the

@@ -158,7 +158,30 @@ docker compose exec -T db sh -c \
 上传文件可以用临时容器从 volume 导出。恢复前停止 API，并确保数据库备份与上传文件
 来自同一个时间点。
 
-## 7. 更新
+## 7. 可选语音转写
+
+启用语音转写会把原始音频发送给配置的第三方服务。启用前请阅读[隐私说明](privacy.md)。
+PairNest 支持传统 OpenAI 兼容的 `audio/transcriptions` 接口，以及 Qwen3-ASR-Flash
+兼容的 `chat/completions` 接口：
+
+```dotenv
+# 传统 multipart 上传
+PAIRNEST_TRANSCRIPTION_API_MODE=audio-transcriptions
+PAIRNEST_TRANSCRIPTION_API_URL=https://provider.example/v1/audio/transcriptions
+PAIRNEST_TRANSCRIPTION_API_KEY=replace-me
+PAIRNEST_TRANSCRIPTION_MODEL=whisper-1
+
+# 或 Qwen 兼容模式
+PAIRNEST_TRANSCRIPTION_API_MODE=qwen-chat-completions
+PAIRNEST_TRANSCRIPTION_API_URL=https://workspace.example/compatible-mode/v1
+PAIRNEST_TRANSCRIPTION_API_KEY=replace-me
+PAIRNEST_TRANSCRIPTION_MODEL=qwen3-asr-flash
+```
+
+Qwen 模式的 URL 可以填写 API base，也可以填写完整的 `/chat/completions` 地址。真实
+供应商域名、Workspace ID 和密钥只能放在未提交的 `.env` 中。
+
+## 8. 更新
 
 更新代码前先备份。随后在项目根目录执行：
 
@@ -172,7 +195,7 @@ docker compose ps
 `migrate` 会在新 API 启动前执行仓库中已提交的 Prisma migration。生产环境不要用
 `prisma db push` 替代 migration。
 
-## 8. 常见问题
+## 9. 常见问题
 
 迁移失败：
 

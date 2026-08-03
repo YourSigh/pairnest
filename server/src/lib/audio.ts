@@ -4,9 +4,12 @@ import path from 'path';
 import multer from 'multer';
 
 const MAX_AUDIO_SIZE = 12 * 1024 * 1024;
+const MAX_QWEN_DATA_URL_SIZE = 10 * 1024 * 1024;
 const UPLOAD_DIR =
   process.env.PAIRNEST_UPLOAD_DIR || path.resolve(process.cwd(), 'uploads');
 const CHAT_AUDIO_DIR = path.join(UPLOAD_DIR, 'chat-audio');
+
+type TranscriptionApiMode = 'audio-transcriptions' | 'qwen-chat-completions';
 
 const MIME_EXTENSIONS: Record<string, string> = {
   'audio/aac': '.aac',
@@ -78,6 +81,31 @@ export function isTranscriptionConfigured() {
   );
 }
 
+function getTranscriptionApiMode(): TranscriptionApiMode {
+  return process.env.PAIRNEST_TRANSCRIPTION_API_MODE?.trim() ===
+    'qwen-chat-completions'
+    ? 'qwen-chat-completions'
+    : 'audio-transcriptions';
+}
+
+function getQwenChatCompletionsUrl(apiUrl: string) {
+  const normalizedUrl = apiUrl.replace(/\/+$/, '');
+  return normalizedUrl.endsWith('/chat/completions')
+    ? normalizedUrl
+    : `${normalizedUrl}/chat/completions`;
+}
+
+function getTranscriptionErrorMessage(
+  body: { message?: unknown; error?: { message?: unknown } } | null,
+  status: number,
+) {
+  return typeof body?.error?.message === 'string'
+    ? body.error.message
+    : typeof body?.message === 'string'
+      ? body.message
+      : `语音转文字服务返回 ${status}`;
+}
+
 export async function transcribeAudioFile(options: {
   filePath: string;
   fileName: string;
@@ -90,6 +118,64 @@ export async function transcribeAudioFile(options: {
   }
 
   const bytes = await readFile(options.filePath);
+  const model =
+    process.env.PAIRNEST_TRANSCRIPTION_MODEL?.trim() || 'whisper-1';
+  const language =
+    process.env.PAIRNEST_TRANSCRIPTION_LANGUAGE?.trim() || 'zh';
+
+  if (getTranscriptionApiMode() === 'qwen-chat-completions') {
+    const audioDataUrl = `data:${options.mimeType};base64,${bytes.toString('base64')}`;
+    if (Buffer.byteLength(audioDataUrl) > MAX_QWEN_DATA_URL_SIZE) {
+      throw new Error('语音文件编码后超过 Qwen3-ASR-Flash 的 10 MB 限制');
+    }
+
+    const response = await fetch(getQwenChatCompletionsUrl(apiUrl), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'input_audio',
+                input_audio: { data: audioDataUrl },
+              },
+            ],
+          },
+        ],
+        stream: false,
+        asr_options: {
+          language,
+          enable_itn: true,
+        },
+      }),
+    });
+    const body = (await response.json().catch(() => null)) as
+      | {
+          choices?: Array<{ message?: { content?: unknown } }>;
+          message?: unknown;
+          error?: { message?: unknown };
+        }
+      | null;
+    if (!response.ok) {
+      throw new Error(getTranscriptionErrorMessage(body, response.status));
+    }
+
+    const text =
+      typeof body?.choices?.[0]?.message?.content === 'string'
+        ? body.choices[0].message.content.trim()
+        : '';
+    if (!text) {
+      throw new Error('语音转文字服务没有返回文本');
+    }
+    return text;
+  }
+
   const form = new FormData();
   form.append(
     'file',
@@ -98,11 +184,11 @@ export async function transcribeAudioFile(options: {
   );
   form.append(
     'model',
-    process.env.PAIRNEST_TRANSCRIPTION_MODEL?.trim() || 'whisper-1',
+    model,
   );
   form.append(
     'language',
-    process.env.PAIRNEST_TRANSCRIPTION_LANGUAGE?.trim() || 'zh',
+    language,
   );
 
   const response = await fetch(apiUrl, {
@@ -117,13 +203,7 @@ export async function transcribeAudioFile(options: {
     | { text?: unknown; message?: unknown; error?: { message?: unknown } }
     | null;
   if (!response.ok) {
-    const message =
-      typeof body?.error?.message === 'string'
-        ? body.error.message
-        : typeof body?.message === 'string'
-          ? body.message
-          : `语音转文字服务返回 ${response.status}`;
-    throw new Error(message);
+    throw new Error(getTranscriptionErrorMessage(body, response.status));
   }
 
   const text = typeof body?.text === 'string' ? body.text.trim() : '';

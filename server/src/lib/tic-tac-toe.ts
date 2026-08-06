@@ -40,7 +40,7 @@ const WINNING_LINES = [
   [2, 4, 6],
 ] as const;
 
-let mutationQueue = Promise.resolve();
+const mutationQueues = new Map<string, Promise<void>>();
 
 export class TicTacToeError extends Error {
   constructor(
@@ -149,11 +149,19 @@ export async function getTicTacToeGame() {
 }
 
 function withMutationLock<T>(operation: () => Promise<T>): Promise<T> {
-  const result = mutationQueue.then(operation, operation);
-  mutationQueue = result.then(
+  const coupleId = requireCurrentCoupleId();
+  const previous = mutationQueues.get(coupleId) ?? Promise.resolve();
+  const result = previous.then(operation, operation);
+  const settled = result.then(
     () => undefined,
     () => undefined,
   );
+  mutationQueues.set(coupleId, settled);
+  void settled.then(() => {
+    if (mutationQueues.get(coupleId) === settled) {
+      mutationQueues.delete(coupleId);
+    }
+  });
   return result;
 }
 

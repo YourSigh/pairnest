@@ -126,7 +126,7 @@ type HistoryRow = Prisma.DrawGuessRoundGetPayload<{
   };
 }>;
 
-let mutationQueue = Promise.resolve();
+const mutationQueues = new Map<string, Promise<void>>();
 
 export class DrawGuessError extends Error {
   constructor(
@@ -138,11 +138,19 @@ export class DrawGuessError extends Error {
 }
 
 function withMutationLock<T>(operation: () => Promise<T>): Promise<T> {
-  const result = mutationQueue.then(operation, operation);
-  mutationQueue = result.then(
+  const coupleId = requireCurrentCoupleId();
+  const previous = mutationQueues.get(coupleId) ?? Promise.resolve();
+  const result = previous.then(operation, operation);
+  const settled = result.then(
     () => undefined,
     () => undefined,
   );
+  mutationQueues.set(coupleId, settled);
+  void settled.then(() => {
+    if (mutationQueues.get(coupleId) === settled) {
+      mutationQueues.delete(coupleId);
+    }
+  });
   return result;
 }
 

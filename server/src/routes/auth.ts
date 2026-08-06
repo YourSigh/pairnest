@@ -100,6 +100,12 @@ function oppositePartnerRole(role: PartnerRole): PartnerRole {
   return role === "partnerA" ? "partnerB" : "partnerA";
 }
 
+function isOpenCoupleCreateEnabled() {
+  const configured = process.env.PAIRNEST_ALLOW_OPEN_COUPLE_CREATE?.trim().toLowerCase();
+  if (!configured) return true;
+  return configured !== "false" && configured !== "0" && configured !== "no";
+}
+
 function parseDeletionAction(value: unknown): DeletionAction | null {
   return value === "request" || value === "confirm" ? value : null;
 }
@@ -245,6 +251,15 @@ authRouter.post(
   "/couples/create",
   ipRateLimit("couple-create", 5, 60 * 60 * 1000),
   async (_req, res) => {
+    if (!isOpenCoupleCreateEnabled()) {
+      res.status(403).json({
+        ok: false,
+        code: "OPEN_COUPLE_CREATE_DISABLED",
+        message: "此实例已关闭公开创建情侣空间，请联系运营者获取邀请",
+      });
+      return;
+    }
+
     const coupleId = createSessionId();
     const pairingCode = generatePairingCode();
     let recoveryCode = generatePairingCode();

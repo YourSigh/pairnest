@@ -102,15 +102,15 @@ function oppositePartnerRole(role: PartnerRole): PartnerRole {
 
 export function isOpenCoupleCreateEnabled() {
   const configured = process.env.PAIRNEST_ALLOW_OPEN_COUPLE_CREATE?.trim().toLowerCase();
-  if (!configured) return true;
-  return configured !== "false" && configured !== "0" && configured !== "no";
+  if (!configured) return false;
+  return configured === "true" || configured === "1" || configured === "yes";
 }
 
 export function isLegacySharedSecretActivateEnabled() {
   const configured =
     process.env.PAIRNEST_ALLOW_LEGACY_SHARED_SECRET_ACTIVATE?.trim().toLowerCase();
-  if (!configured) return true;
-  return configured !== "false" && configured !== "0" && configured !== "no";
+  if (!configured) return false;
+  return configured === "true" || configured === "1" || configured === "yes";
 }
 
 function parseDeletionAction(value: unknown): DeletionAction | null {

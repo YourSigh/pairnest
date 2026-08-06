@@ -45,8 +45,8 @@ Important settings:
 | `PAIRNEST_DB_NAME` / `PAIRNEST_DB_USER` | `pairnest` | MySQL database and application user |
 | `PAIRNEST_DB_PASSWORD` / `PAIRNEST_DB_ROOT_PASSWORD` | required | Independent MySQL passwords |
 | `PAIRNEST_AUTH_TOKEN_SECRET` | required | Signs access tokens and pseudonymizes authentication-attempt keys |
-| `PAIRNEST_ALLOW_OPEN_COUPLE_CREATE` | `true` | Allow anonymous couple creation; set `false` on public instances |
-| `PAIRNEST_ALLOW_LEGACY_SHARED_SECRET_ACTIVATE` | `true` | Allow old shared-secret activation into `legacy-default-couple`; set `false` after migration |
+| `PAIRNEST_ALLOW_OPEN_COUPLE_CREATE` | `false` | Allow anonymous couple creation; enable only on private/trusted instances |
+| `PAIRNEST_ALLOW_LEGACY_SHARED_SECRET_ACTIVATE` | `false` | Allow old shared-secret activation into `legacy-default-couple`; enable only during migration |
 | `PAIRNEST_API_BIND` / `PAIRNEST_API_PORT` | `127.0.0.1` / `4000` | Host interface and port |
 | `PAIRNEST_CORS_ORIGIN` | `*` | Browser origin or comma-separated origins |
 | `PAIRNEST_TRUST_PROXY` | `false` | Trust proxy-provided client addresses and protocol |

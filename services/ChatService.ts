@@ -1244,6 +1244,7 @@ class ChatServiceImpl {
       throw new Error('无法访问本机缓存目录');
     }
 
+    const generation = CoupleCacheEpoch.get();
     const extension =
       message.audio.fileName.match(/(\.[a-zA-Z0-9]+)$/)?.[1] || '.m4a';
     const safeCreatedAt = new Date(message.createdAt)
@@ -1253,6 +1254,9 @@ class ChatServiceImpl {
     const fileName = `voice-${safeCreatedAt}-${safeMessageId}${extension}`;
     const localUri = `${FileSystem.cacheDirectory}${fileName}`;
     const token = await AuthService.getAccessToken();
+    if (!CoupleCacheEpoch.isCurrent(generation)) {
+      throw new Error('情侣空间已切换，已取消语音下载');
+    }
 
     await FileSystem.deleteAsync(localUri, { idempotent: true });
     const result = await FileSystem.downloadAsync(
@@ -1264,6 +1268,10 @@ class ChatServiceImpl {
         },
       },
     );
+    if (!CoupleCacheEpoch.isCurrent(generation)) {
+      await FileSystem.deleteAsync(localUri, { idempotent: true });
+      throw new Error('情侣空间已切换，已取消语音下载');
+    }
     if (result.status < 200 || result.status >= 300) {
       await FileSystem.deleteAsync(localUri, { idempotent: true });
       throw new Error(`下载语音失败（${result.status}）`);

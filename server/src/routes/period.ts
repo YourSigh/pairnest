@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { hasOverlap } from '../lib/period';
 import { requireCurrentCoupleId } from '../lib/tenant-context';
+import { getAuthenticatedRole } from '../middleware/auth';
+import type { Response } from 'express';
 
 const DEFAULT_SETTINGS = {
   cycleLength: 28,
@@ -15,6 +17,16 @@ const MAX_SYNC_DAILY_LOGS = 2000;
 const FLOW_VALUES = new Set(['light', 'medium', 'heavy']);
 
 export const periodRouter = Router();
+
+function rejectUnlessPeriodEditor(res: Response) {
+  if (getAuthenticatedRole(res) === 'female') return false;
+  res.status(403).json({
+    ok: false,
+    code: 'PERIOD_READ_ONLY',
+    message: '仅伴侣 A 可以编辑经期记录',
+  });
+  return true;
+}
 
 type IncomingPeriodRecord = {
   id: string;
@@ -210,6 +222,7 @@ periodRouter.get('/', async (_req, res) => {
 });
 
 periodRouter.put('/settings', async (req, res) => {
+  if (rejectUnlessPeriodEditor(res)) return;
   const coupleId = requireCurrentCoupleId();
   const cycleLength = Number(req.body?.cycleLength);
   const periodDuration = Number(req.body?.periodDuration);
@@ -235,6 +248,7 @@ periodRouter.put('/settings', async (req, res) => {
 });
 
 periodRouter.put('/logs/:date', async (req, res) => {
+  if (rejectUnlessPeriodEditor(res)) return;
   const coupleId = requireCurrentCoupleId();
   const parsed = parseIncomingDailyLog(req.body, req.params.date, req.params.date);
   if ('error' in parsed) {
@@ -265,6 +279,7 @@ periodRouter.put('/logs/:date', async (req, res) => {
 });
 
 periodRouter.post('/sync', async (req, res) => {
+  if (rejectUnlessPeriodEditor(res)) return;
   const coupleId = requireCurrentCoupleId();
   const rawRecords = Array.isArray(req.body?.records)
     ? req.body.records.slice(0, MAX_SYNC_RECORDS)
@@ -373,6 +388,7 @@ periodRouter.post('/sync', async (req, res) => {
 });
 
 periodRouter.post('/records', async (req, res) => {
+  if (rejectUnlessPeriodEditor(res)) return;
   const coupleId = requireCurrentCoupleId();
   const startDate = typeof req.body?.startDate === 'string' ? req.body.startDate.trim() : '';
   const endDate =
@@ -426,6 +442,7 @@ periodRouter.post('/records', async (req, res) => {
 });
 
 periodRouter.patch('/records/:id', async (req, res) => {
+  if (rejectUnlessPeriodEditor(res)) return;
   const existing = await prisma.periodRecord.findUnique({ where: { id: req.params.id } });
   if (!existing) {
     res.status(404).json({ ok: false, message: '记录不存在' });
@@ -476,6 +493,7 @@ periodRouter.patch('/records/:id', async (req, res) => {
 });
 
 periodRouter.delete('/records/:id', async (req, res) => {
+  if (rejectUnlessPeriodEditor(res)) return;
   try {
     await prisma.periodRecord.delete({ where: { id: req.params.id } });
     res.json({ ok: true });

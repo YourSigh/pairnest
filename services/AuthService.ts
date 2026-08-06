@@ -318,6 +318,7 @@ class AuthServiceImpl {
   private accessTokenExpiresAt = 0;
   private boundPartnerRole: PartnerRole | null = null;
   private boundCoupleId: string | null = null;
+  private sessionGeneration = 0;
   private initializePromise: Promise<void> | null = null;
   private refreshPromise: Promise<string> | null = null;
   private sensitiveOperation: "server-configuration" | "recovery-credential" | null =
@@ -880,10 +881,14 @@ class AuthServiceImpl {
   }
 
   private async refreshInternal() {
+    const sessionGeneration = this.sessionGeneration;
     const [refreshToken, credentials] = await Promise.all([
       getStoredItem(REFRESH_TOKEN_KEY),
       this.getOrCreateDeviceCredentials(),
     ]);
+    if (sessionGeneration !== this.sessionGeneration) {
+      throw new AuthApiError("会话已更新", "AUTH_SESSION_SUPERSEDED");
+    }
     if (!refreshToken) {
       throw new AuthApiError("设备尚未激活", "REFRESH_TOKEN_MISSING", 401);
     }
@@ -900,9 +905,15 @@ class AuthServiceImpl {
         }),
       },
     );
+    if (sessionGeneration !== this.sessionGeneration) {
+      throw new AuthApiError("会话已更新", "AUTH_SESSION_SUPERSEDED");
+    }
     if (!response.ok) {
       const error = parseErrorResponse(response, body);
-      if (error.status === 401) {
+      if (
+        error.status === 401 &&
+        sessionGeneration === this.sessionGeneration
+      ) {
         await this.clearSession();
         this.setState({
           status: "unauthenticated",
@@ -913,7 +924,7 @@ class AuthServiceImpl {
     }
 
     const tokens = this.parseTokenResponse(body, response.status);
-    await this.acceptTokens(tokens);
+    await this.acceptTokens(tokens, sessionGeneration);
     if (this.state.status !== "authenticated") {
       this.setState({
         status: "authenticated",
@@ -924,15 +935,33 @@ class AuthServiceImpl {
     return tokens.accessToken;
   }
 
-  private async acceptTokens(tokens: TokenResponse) {
+  private async acceptTokens(
+    tokens: TokenResponse,
+    expectedSessionGeneration?: number,
+  ) {
+    if (
+      expectedSessionGeneration !== undefined &&
+      expectedSessionGeneration !== this.sessionGeneration
+    ) {
+      throw new AuthApiError("会话已更新", "AUTH_SESSION_SUPERSEDED");
+    }
+
     const previousCoupleId =
       this.boundCoupleId ?? (await getStoredItem(BOUND_COUPLE_ID_KEY));
+    if (
+      expectedSessionGeneration !== undefined &&
+      expectedSessionGeneration !== this.sessionGeneration
+    ) {
+      throw new AuthApiError("会话已更新", "AUTH_SESSION_SUPERSEDED");
+    }
+
     const coupleChanged =
       !previousCoupleId || previousCoupleId !== tokens.coupleId;
     if (coupleChanged) {
-      // Drop the previous couple's credentials before clearing local caches so
-      // in-flight writers cannot authorize or persist under the new epoch.
+      // Cancel in-flight refresh/logout races before wiping local caches.
+      this.sessionGeneration += 1;
       this.invalidateAccessToken();
+      await removeStoredItem(REFRESH_TOKEN_KEY);
       await CoupleLocalCache.clearCoupleScopedData();
     }
 
@@ -946,6 +975,16 @@ class AuthServiceImpl {
     this.boundCoupleId = tokens.coupleId;
     this.accessTokenExpiresAt =
       Date.now() + Math.max(1, tokens.expiresIn) * 1000;
+
+    // In-session couple switches disconnect WS during cache clear; resume now
+    // that new tokens are installed (activate remounts AuthGate separately).
+    if (coupleChanged && this.state.status === "authenticated") {
+      try {
+        require("@/services/ChatService").ChatService.connect();
+      } catch {
+        // Optional; chat screens also connect on focus.
+      }
+    }
   }
 
   private async getOrCreateDeviceCredentials(): Promise<DeviceCredentials> {
@@ -973,11 +1012,13 @@ class AuthServiceImpl {
   }
 
   private async clearSession() {
+    this.sessionGeneration += 1;
     this.invalidateAccessToken();
     this.boundPartnerRole = null;
     this.boundCoupleId = null;
+    // Drop refresh first so concurrent refresh cannot revive this session.
+    await removeStoredItem(REFRESH_TOKEN_KEY);
     await Promise.all([
-      removeStoredItem(REFRESH_TOKEN_KEY),
       removeStoredItem(BOUND_COUPLE_ID_KEY),
       RoleStorage.clearAuthenticatedRole(),
       CoupleLocalCache.clearCoupleScopedData(),

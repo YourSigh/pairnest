@@ -69,10 +69,10 @@ request must supply:
 ```
 
 Use `partnerB` for the second member. This compatibility path works only when
-the legacy `AuthConfig` row and its original secret are available. It is
-protected by IP/device failure limits, and the server verifies the stored
-scrypt hash. Set `PAIRNEST_ALLOW_LEGACY_SHARED_SECRET_ACTIVATE=false` after
-migration to disable this path even if `AuthConfig` remains.
+the legacy `AuthConfig` row and its original secret are available, and
+`PAIRNEST_ALLOW_LEGACY_SHARED_SECRET_ACTIVATE=true` is set. It is protected by
+IP/device failure limits, and the server verifies the stored scrypt hash. Keep
+the flag `false` after migration even if `AuthConfig` remains.
 
 The public PairNest app does not embed, publish, or require this old secret.
 Use it only through a trusted one-time migration client or operator-controlled

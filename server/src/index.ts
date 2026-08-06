@@ -28,7 +28,7 @@ import {
 } from "./lib/storage-quota";
 import { requireAuth } from "./middleware/auth";
 import { aiRouter } from "./routes/ai";
-import { authRouter } from "./routes/auth";
+import { authRouter, isOpenCoupleCreateEnabled } from "./routes/auth";
 import { checkInsRouter } from "./routes/check-ins";
 import { eventsRouter } from "./routes/events";
 import { drawGuessRouter } from "./routes/draw-guess";
@@ -73,6 +73,7 @@ app.get("/v1/ping", (_req, res) => {
     service: "pairnest-api",
     message: "pong",
     at: new Date().toISOString(),
+    openCoupleCreate: isOpenCoupleCreateEnabled(),
   });
 });
 

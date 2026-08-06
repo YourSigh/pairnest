@@ -210,4 +210,15 @@ export const ChatVideoCache = {
       () => undefined,
     );
   },
+
+  async clearAll() {
+    downloads.clear();
+    leasedDownloads.clear();
+    localVideoSources.clear();
+    if (DOWNLOAD_DIRECTORY) {
+      await FileSystem.deleteAsync(DOWNLOAD_DIRECTORY, {
+        idempotent: true,
+      }).catch(() => undefined);
+    }
+  },
 };

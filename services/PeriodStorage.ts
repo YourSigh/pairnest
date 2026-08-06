@@ -103,6 +103,10 @@ function createLocalPeriodId() {
 export class PeriodStorage {
   private static syncPromise: Promise<PeriodData> | null = null;
 
+  static clearMemoryCache() {
+    this.syncPromise = null;
+  }
+
   static async getData(): Promise<PeriodData> {
     const local = await this.getLocalData();
     const shouldUploadLocal =

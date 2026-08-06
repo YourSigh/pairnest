@@ -11,13 +11,16 @@ import {
   type PartnerRole,
   toChatRole,
 } from "@/constants/chat";
+import { CoupleLocalCache } from "@/services/CoupleLocalCache";
 import { InstanceConfigService } from "@/services/InstanceConfigService";
 import { RoleStorage } from "@/services/RoleStorage";
 
 const DEVICE_ID_KEY = "pairnest.auth.deviceId";
 const DEVICE_SECRET_KEY = "pairnest.auth.deviceSecret";
 const REFRESH_TOKEN_KEY = "pairnest.auth.refreshToken";
+const BOUND_COUPLE_ID_KEY = "pairnest.auth.boundCoupleId";
 const RECOVERY_CODE_KEY_PREFIX = "pairnest.auth.recoveryCode";
+const RECOVERY_CODE_INDEX_KEY_PREFIX = "pairnest.auth.recoveryCodeIndex";
 const ACCESS_TOKEN_SAFETY_WINDOW_MS = 30_000;
 const AUTH_REQUEST_TIMEOUT_MS = 10_000;
 
@@ -207,12 +210,75 @@ async function removeStoredItem(key: string) {
   await SecureStore.deleteItemAsync(key);
 }
 
-async function getRecoveryCodeStorageKey(serverUrl: string) {
-  const serverHash = await Crypto.digestStringAsync(
+async function getServerHash(serverUrl: string) {
+  return Crypto.digestStringAsync(
     Crypto.CryptoDigestAlgorithm.SHA256,
     serverUrl,
   );
+}
+
+async function getLegacyRecoveryCodeStorageKey(serverUrl: string) {
+  const serverHash = await getServerHash(serverUrl);
   return `${RECOVERY_CODE_KEY_PREFIX}.${serverHash}`;
+}
+
+async function getRecoveryCodeStorageKey(serverUrl: string, coupleId: string) {
+  const serverHash = await getServerHash(serverUrl);
+  return `${RECOVERY_CODE_KEY_PREFIX}.${serverHash}.${coupleId}`;
+}
+
+async function getRecoveryCodeIndexKey(serverUrl: string) {
+  const serverHash = await getServerHash(serverUrl);
+  return `${RECOVERY_CODE_INDEX_KEY_PREFIX}.${serverHash}`;
+}
+
+async function readRecoveryCodeIndex(serverUrl: string): Promise<string[]> {
+  const stored = await getStoredItem(await getRecoveryCodeIndexKey(serverUrl));
+  if (!stored) return [];
+  try {
+    const payload: unknown = JSON.parse(stored);
+    if (!Array.isArray(payload)) return [];
+    return payload.filter(
+      (value): value is string => typeof value === "string" && value.length > 0,
+    );
+  } catch {
+    return [];
+  }
+}
+
+async function writeRecoveryCodeIndex(serverUrl: string, coupleIds: string[]) {
+  const unique = [...new Set(coupleIds)];
+  const key = await getRecoveryCodeIndexKey(serverUrl);
+  if (unique.length === 0) {
+    await removeStoredItem(key);
+    return;
+  }
+  await setStoredItem(key, JSON.stringify(unique));
+}
+
+function parseStoredRecoveryCredential(
+  serverUrl: string,
+  stored: string,
+): StoredRecoveryCredential | null {
+  try {
+    const payload: unknown = JSON.parse(stored);
+    if (
+      !isRecord(payload) ||
+      payload.serverUrl !== serverUrl ||
+      typeof payload.coupleId !== "string" ||
+      payload.coupleId.length === 0 ||
+      !isPairingCode(payload.recoveryCode)
+    ) {
+      return null;
+    }
+    return {
+      serverUrl,
+      coupleId: payload.coupleId,
+      recoveryCode: payload.recoveryCode,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function bytesToHex(bytes: Uint8Array) {
@@ -251,6 +317,7 @@ class AuthServiceImpl {
   private accessToken: string | null = null;
   private accessTokenExpiresAt = 0;
   private boundPartnerRole: PartnerRole | null = null;
+  private boundCoupleId: string | null = null;
   private initializePromise: Promise<void> | null = null;
   private refreshPromise: Promise<string> | null = null;
   private sensitiveOperation: "server-configuration" | "recovery-credential" | null =
@@ -517,36 +584,64 @@ class AuthServiceImpl {
     };
   }
 
+  async getAuthCapabilities(): Promise<{ openCoupleCreate: boolean }> {
+    const { response, body } = await fetchAuthJsonRequest(PAIRNEST_API.ping, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) {
+      throw parseErrorResponse(response, body);
+    }
+    // Older servers omit the field; default to allowing create.
+    const openCoupleCreate =
+      !isRecord(body) || body.openCoupleCreate !== false;
+    return { openCoupleCreate };
+  }
+
   async getStoredRecoveryCode(coupleId: string) {
-    const credential = await this.getStoredRecoveryCredential();
-    return credential?.coupleId === coupleId ? credential.recoveryCode : null;
+    const credential = await this.readRecoveryCredential(coupleId);
+    return credential?.recoveryCode ?? null;
   }
 
   async getStoredRecoveryCredential(): Promise<StoredRecoveryCredential | null> {
     const serverUrl = InstanceConfigService.getApiBaseUrl();
-    const storageKey = await getRecoveryCodeStorageKey(serverUrl);
+    const index = await readRecoveryCodeIndex(serverUrl);
+    for (let i = index.length - 1; i >= 0; i -= 1) {
+      const credential = await this.readRecoveryCredential(index[i]);
+      if (credential) return credential;
+    }
+
+    // Migrate the pre-multi-tenant single-slot key once.
+    const legacyKey = await getLegacyRecoveryCodeStorageKey(serverUrl);
+    const legacyStored = await getStoredItem(legacyKey);
+    if (!legacyStored) return null;
+    const legacy = parseStoredRecoveryCredential(serverUrl, legacyStored);
+    if (!legacy) {
+      await removeStoredItem(legacyKey);
+      return null;
+    }
+    await this.saveRecoveryCode(
+      serverUrl,
+      legacy.coupleId,
+      legacy.recoveryCode,
+    );
+    await removeStoredItem(legacyKey);
+    return legacy;
+  }
+
+  private async readRecoveryCredential(
+    coupleId: string,
+  ): Promise<StoredRecoveryCredential | null> {
+    const serverUrl = InstanceConfigService.getApiBaseUrl();
+    const storageKey = await getRecoveryCodeStorageKey(serverUrl, coupleId);
     const stored = await getStoredItem(storageKey);
     if (!stored) return null;
-    try {
-      const payload: unknown = JSON.parse(stored);
-      if (
-        !isRecord(payload) ||
-        payload.serverUrl !== serverUrl ||
-        typeof payload.coupleId !== "string" ||
-        payload.coupleId.length === 0 ||
-        !isPairingCode(payload.recoveryCode)
-      ) {
-        return null;
-      }
-      return {
-        serverUrl,
-        coupleId: payload.coupleId,
-        recoveryCode: payload.recoveryCode,
-      };
-    } catch {
+    const credential = parseStoredRecoveryCredential(serverUrl, stored);
+    if (!credential || credential.coupleId !== coupleId) {
       await removeStoredItem(storageKey);
       return null;
     }
+    return credential;
   }
 
   async rotateRecoveryCode(): Promise<RecoveryCodeResult> {
@@ -596,18 +691,20 @@ class AuthServiceImpl {
       );
     }
     if (body.deleted) {
-      const recoveryCodeStorageKey = await getRecoveryCodeStorageKey(
-        InstanceConfigService.getApiBaseUrl(),
-      );
+      const serverUrl = InstanceConfigService.getApiBaseUrl();
+      const coupleId = this.boundCoupleId;
       await Promise.allSettled([
         this.clearSession(),
-        removeStoredItem(recoveryCodeStorageKey),
+        coupleId
+          ? this.removeRecoveryCredential(serverUrl, coupleId)
+          : Promise.resolve(),
       ]);
       this.invalidateAccessToken();
       this.boundPartnerRole = null;
+      this.boundCoupleId = null;
       this.setState({
         status: "unauthenticated",
-        serverUrl: InstanceConfigService.getApiBaseUrl(),
+        serverUrl,
       });
       return {
         deleted: true,
@@ -692,8 +789,22 @@ class AuthServiceImpl {
       recoveryCode,
     };
     await setStoredItem(
-      await getRecoveryCodeStorageKey(serverUrl),
+      await getRecoveryCodeStorageKey(serverUrl, coupleId),
       JSON.stringify(payload),
+    );
+    const index = await readRecoveryCodeIndex(serverUrl);
+    await writeRecoveryCodeIndex(serverUrl, [
+      ...index.filter((id) => id !== coupleId),
+      coupleId,
+    ]);
+  }
+
+  private async removeRecoveryCredential(serverUrl: string, coupleId: string) {
+    await removeStoredItem(await getRecoveryCodeStorageKey(serverUrl, coupleId));
+    const index = await readRecoveryCodeIndex(serverUrl);
+    await writeRecoveryCodeIndex(
+      serverUrl,
+      index.filter((id) => id !== coupleId),
     );
   }
 
@@ -719,6 +830,7 @@ class AuthServiceImpl {
       return;
     }
     await this.getOrCreateDeviceCredentials();
+    this.boundCoupleId = await getStoredItem(BOUND_COUPLE_ID_KEY);
     const refreshToken = await getStoredItem(REFRESH_TOKEN_KEY);
     if (!refreshToken) {
       this.setState({ status: "unauthenticated", serverUrl });
@@ -812,12 +924,20 @@ class AuthServiceImpl {
   }
 
   private async acceptTokens(tokens: TokenResponse) {
+    const previousCoupleId =
+      this.boundCoupleId ?? (await getStoredItem(BOUND_COUPLE_ID_KEY));
+    if (previousCoupleId && previousCoupleId !== tokens.coupleId) {
+      await CoupleLocalCache.clearCoupleScopedData();
+    }
+
     await Promise.all([
       setStoredItem(REFRESH_TOKEN_KEY, tokens.refreshToken),
+      setStoredItem(BOUND_COUPLE_ID_KEY, tokens.coupleId),
       RoleStorage.setAuthenticatedRole(toChatRole(tokens.partnerRole)),
     ]);
     this.accessToken = tokens.accessToken;
     this.boundPartnerRole = tokens.partnerRole;
+    this.boundCoupleId = tokens.coupleId;
     this.accessTokenExpiresAt =
       Date.now() + Math.max(1, tokens.expiresIn) * 1000;
   }
@@ -839,17 +959,22 @@ class AuthServiceImpl {
       setStoredItem(DEVICE_ID_KEY, credentials.deviceId),
       setStoredItem(DEVICE_SECRET_KEY, credentials.deviceSecret),
       removeStoredItem(REFRESH_TOKEN_KEY),
+      removeStoredItem(BOUND_COUPLE_ID_KEY),
       RoleStorage.clearAuthenticatedRole(),
     ]);
+    this.boundCoupleId = null;
     return credentials;
   }
 
   private async clearSession() {
     this.invalidateAccessToken();
     this.boundPartnerRole = null;
+    this.boundCoupleId = null;
     await Promise.all([
       removeStoredItem(REFRESH_TOKEN_KEY),
+      removeStoredItem(BOUND_COUPLE_ID_KEY),
       RoleStorage.clearAuthenticatedRole(),
+      CoupleLocalCache.clearCoupleScopedData(),
       Platform.OS === "android"
         ? require("@/services/BackgroundMessagingService").BackgroundMessagingService.stop()
         : Promise.resolve(),

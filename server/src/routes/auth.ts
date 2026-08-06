@@ -100,7 +100,7 @@ function oppositePartnerRole(role: PartnerRole): PartnerRole {
   return role === "partnerA" ? "partnerB" : "partnerA";
 }
 
-function isOpenCoupleCreateEnabled() {
+export function isOpenCoupleCreateEnabled() {
   const configured = process.env.PAIRNEST_ALLOW_OPEN_COUPLE_CREATE?.trim().toLowerCase();
   if (!configured) return true;
   return configured !== "false" && configured !== "0" && configured !== "no";

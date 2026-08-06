@@ -46,4 +46,10 @@ export class BackgroundMessageSyncStorage {
       });
     await this.pendingWrite;
   }
+
+  static clearMemoryCache() {
+    this.cachedLastObservedAt = undefined;
+    this.loading = null;
+    this.pendingWrite = Promise.resolve();
+  }
 }

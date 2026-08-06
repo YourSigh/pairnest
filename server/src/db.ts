@@ -46,6 +46,7 @@ const TENANT_MODELS = new Set([
   'PetOwnedItem',
   'PetRoomPlacement',
   'PetFacility',
+  'StorageReservation',
 ]);
 
 /**

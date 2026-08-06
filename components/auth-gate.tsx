@@ -96,6 +96,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   ]);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [openCoupleCreate, setOpenCoupleCreate] = useState(true);
 
   useEffect(() => {
     if (auth.serverUrl) setServerUrl(auth.serverUrl);
@@ -134,6 +135,14 @@ export function AuthGate({ children }: { children: ReactNode }) {
       })
       .catch(() => {
         if (!cancelled) setStoredRecoveryCredential(null);
+      });
+    void auth
+      .getAuthCapabilities()
+      .then((capabilities) => {
+        if (!cancelled) setOpenCoupleCreate(capabilities.openCoupleCreate);
+      })
+      .catch(() => {
+        if (!cancelled) setOpenCoupleCreate(true);
       });
     return () => {
       cancelled = true;
@@ -445,25 +454,31 @@ export function AuthGate({ children }: { children: ReactNode }) {
                   {auth.serverUrl}
                 </ThemedText>
                 <ThemedText style={styles.hint}>
-                  第一次进入时，可以创建情侣空间，或使用另一位伴侣分享的邀请或恢复密钥加入。
+                  {openCoupleCreate
+                    ? "第一次进入时，可以创建情侣空间，或使用另一位伴侣分享的邀请或恢复密钥加入。"
+                    : "此实例已关闭公开创建。请使用另一位伴侣分享的邀请或恢复密钥加入。"}
                 </ThemedText>
-                <TouchableOpacity
-                  style={styles.choiceButton}
-                  disabled={submitting}
-                  onPress={() => void handleCreateCouple()}
-                >
-                  <Ionicons
-                    name="key-outline"
-                    size={22}
-                    color={AppColors.primary}
-                  />
-                  <View style={styles.choiceCopy}>
-                    <ThemedText style={styles.choiceTitle}>创建邀请密钥</ThemedText>
-                    <ThemedText style={styles.choiceDescription}>
-                      生成密钥后发给另一位伴侣加入
-                    </ThemedText>
-                  </View>
-                </TouchableOpacity>
+                {openCoupleCreate ? (
+                  <TouchableOpacity
+                    style={styles.choiceButton}
+                    disabled={submitting}
+                    onPress={() => void handleCreateCouple()}
+                  >
+                    <Ionicons
+                      name="key-outline"
+                      size={22}
+                      color={AppColors.primary}
+                    />
+                    <View style={styles.choiceCopy}>
+                      <ThemedText style={styles.choiceTitle}>
+                        创建邀请密钥
+                      </ThemedText>
+                      <ThemedText style={styles.choiceDescription}>
+                        生成密钥后发给另一位伴侣加入
+                      </ThemedText>
+                    </View>
+                  </TouchableOpacity>
+                ) : null}
                 <TouchableOpacity
                   style={styles.choiceButton}
                   disabled={submitting}

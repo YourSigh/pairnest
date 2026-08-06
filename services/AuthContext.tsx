@@ -25,6 +25,7 @@ type AuthContextValue = AuthState & {
   configureServer: (serverUrl: string) => Promise<void>;
   clearServer: () => Promise<void>;
   createCouple: () => Promise<CreateCoupleResult>;
+  getAuthCapabilities: () => Promise<{ openCoupleCreate: boolean }>;
   validatePairingCode: (
     pairingCode: string,
   ) => Promise<PairingValidation>;
@@ -63,6 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       configureServer: (serverUrl) => AuthService.configureServer(serverUrl),
       clearServer: () => AuthService.clearServer(),
       createCouple: () => AuthService.createCouple(),
+      getAuthCapabilities: () => AuthService.getAuthCapabilities(),
       validatePairingCode: (pairingCode) =>
         AuthService.validatePairingCode(pairingCode),
       activate: (coupleId, pairingCode, partnerRole) =>

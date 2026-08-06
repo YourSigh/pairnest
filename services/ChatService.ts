@@ -1,6 +1,7 @@
 import { PAIRNEST_API } from '@/constants/api';
 import { ChatRole } from '@/constants/chat';
 import { AuthService } from '@/services/AuthService';
+import { CoupleCacheEpoch } from '@/services/CoupleCacheEpoch';
 import {
   ChatStickerService,
   type ChatStickerAsset,
@@ -1030,11 +1031,21 @@ class ChatServiceImpl {
       }
     }
 
+    const generation = CoupleCacheEpoch.get();
     const download = (async () => {
+      if (!CoupleCacheEpoch.isCurrent(generation)) {
+        throw new Error('情侣空间已切换，已取消媒体缓存');
+      }
       await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
       const result = await FileSystem.downloadAsync(options.remoteUri, targetUri, {
         headers: options.headers,
       });
+      if (!CoupleCacheEpoch.isCurrent(generation)) {
+        await FileSystem.deleteAsync(targetUri, { idempotent: true }).catch(
+          () => undefined,
+        );
+        throw new Error('情侣空间已切换，已取消媒体缓存');
+      }
       if (result.status < 200 || result.status >= 300) {
         throw new Error(`缓存媒体失败（${result.status}）`);
       }
@@ -1308,6 +1319,29 @@ class ChatServiceImpl {
         this.connect();
       }
     }, delay);
+  }
+
+  async clearCoupleScopedCaches() {
+    this.mediaDownloads.clear();
+    if (!FileSystem.cacheDirectory) return;
+
+    const mediaDir = `${FileSystem.cacheDirectory}chat-media/`;
+    await FileSystem.deleteAsync(mediaDir, { idempotent: true }).catch(
+      () => undefined,
+    );
+
+    const names = await FileSystem.readDirectoryAsync(
+      FileSystem.cacheDirectory,
+    ).catch(() => [] as string[]);
+    await Promise.all(
+      names
+        .filter((name) => name.startsWith('voice-'))
+        .map((name) =>
+          FileSystem.deleteAsync(`${FileSystem.cacheDirectory}${name}`, {
+            idempotent: true,
+          }).catch(() => undefined),
+        ),
+    );
   }
 }
 

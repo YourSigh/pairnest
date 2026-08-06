@@ -106,6 +106,13 @@ export function isOpenCoupleCreateEnabled() {
   return configured !== "false" && configured !== "0" && configured !== "no";
 }
 
+export function isLegacySharedSecretActivateEnabled() {
+  const configured =
+    process.env.PAIRNEST_ALLOW_LEGACY_SHARED_SECRET_ACTIVATE?.trim().toLowerCase();
+  if (!configured) return true;
+  return configured !== "false" && configured !== "0" && configured !== "no";
+}
+
 function parseDeletionAction(value: unknown): DeletionAction | null {
   return value === "request" || value === "confirm" ? value : null;
 }
@@ -386,7 +393,11 @@ authRouter.post(
     const normalizedCode = normalizePairingCode(pairingCode);
     const pairingCodeHash = hashPairingCode(normalizedCode);
     let legacyAuthorized = false;
-    if (!pairingCodeHash && sharedSecret) {
+    if (
+      !pairingCodeHash &&
+      sharedSecret &&
+      isLegacySharedSecretActivateEnabled()
+    ) {
       const legacyConfig = await prisma.authConfig.findUnique({
         where: { id: 1 },
       });
@@ -536,7 +547,13 @@ authRouter.post(
         if (legacyAuthorized || usingRecoveryCode) {
           await tx.couple.update({
             where: { id: couple.id },
-            data: { status: pairedCount >= 2 ? "paired" : "open" },
+            data: {
+              pairingCodeHash: null,
+              pairingCodeExpiresAt: null,
+              pairingTargetRole: null,
+              pairingPurpose: null,
+              status: pairedCount >= 2 ? "paired" : "open",
+            },
           });
         } else if (!couple.pairingTargetRole && pairedCount < 2) {
           await tx.couple.update({

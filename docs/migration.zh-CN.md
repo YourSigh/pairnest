@@ -59,6 +59,8 @@ migration。全新数据库不会创建占位情侣空间；首个空间由用�
 
 第二位成员使用 `partnerB`。只有数据库仍含旧 `AuthConfig`、且运营者保留原始密钥时，
 此兼容路径才可用。它受 IP/设备失败次数限制保护，服务端会校验已有 scrypt 哈希。
+迁移完成后请设置 `PAIRNEST_ALLOW_LEGACY_SHARED_SECRET_ACTIVATE=false`，即使
+`AuthConfig` 仍在也会关闭此路径。
 
 公开 PairNest App 不会内置、公开或要求这个旧密钥。只应通过可信的一次性迁移客户端或
 运营者控制的请求使用它，然后建立正常的恢复密钥流程。不要把旧密钥写入

@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { PAIRNEST_API } from "@/constants/api";
 import { AuthService } from "@/services/AuthService";
+import { CoupleCacheEpoch } from "@/services/CoupleCacheEpoch";
 
 export interface PeriodRecord {
   id: string;
@@ -64,6 +65,12 @@ class PeriodCloudError extends Error {
   }
 }
 
+class PeriodStaleCacheError extends Error {
+  constructor() {
+    super("情侣空间已切换，已取消经期同步");
+  }
+}
+
 function sortRecords(records: PeriodRecord[]) {
   return [...records].sort((a, b) => b.startDate.localeCompare(a.startDate));
 }
@@ -102,23 +109,35 @@ function createLocalPeriodId() {
 
 export class PeriodStorage {
   private static syncPromise: Promise<PeriodData> | null = null;
+  private static syncGeneration = 0;
 
   static clearMemoryCache() {
     this.syncPromise = null;
+    this.syncGeneration = CoupleCacheEpoch.get();
   }
 
   static async getData(): Promise<PeriodData> {
+    const generation = CoupleCacheEpoch.get();
     const local = await this.getLocalData();
+    if (!CoupleCacheEpoch.isCurrent(generation)) {
+      return normalizeData(null);
+    }
     const shouldUploadLocal =
       local.hasStoredData && (!(await this.isCloudMigrated()) || (await this.isDirty()));
 
     try {
+      if (!CoupleCacheEpoch.isCurrent(generation)) {
+        return normalizeData(null);
+      }
       return shouldUploadLocal
-        ? await this.syncLocalToCloud(local.data)
-        : await this.fetchCloudData();
+        ? await this.syncLocalToCloud(local.data, generation)
+        : await this.fetchCloudData(generation);
     } catch (error) {
+      if (error instanceof PeriodStaleCacheError) {
+        return normalizeData(null);
+      }
       console.error("Error syncing period data:", error);
-      return local.data;
+      return CoupleCacheEpoch.isCurrent(generation) ? local.data : normalizeData(null);
     }
   }
 
@@ -280,31 +299,54 @@ export class PeriodStorage {
     return { data: normalizeData(null), hasStoredData: false };
   }
 
-  private static async saveLocalData(data: PeriodData, dirty = false): Promise<void> {
+  private static async saveLocalData(
+    data: PeriodData,
+    dirty = false,
+    generation = CoupleCacheEpoch.get(),
+  ): Promise<void> {
+    this.assertCurrent(generation);
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeData(data)));
     await AsyncStorage.setItem(DIRTY_KEY, dirty ? "1" : "0");
+    this.assertCurrent(generation);
   }
 
-  private static async fetchCloudData(): Promise<PeriodData> {
+  private static async fetchCloudData(
+    generation = CoupleCacheEpoch.get(),
+  ): Promise<PeriodData> {
+    this.assertCurrent(generation);
     const body = await this.requestCloud(PAIRNEST_API.period);
+    this.assertCurrent(generation);
     const data = normalizeData(body.data);
-    await this.saveLocalData(data, false);
-    await this.markCloudMigrated();
+    await this.saveLocalData(data, false, generation);
+    await this.markCloudMigrated(generation);
     return data;
   }
 
-  private static syncLocalToCloud(data: PeriodData): Promise<PeriodData> {
-    if (!this.syncPromise) {
-      this.syncPromise = this.syncLocalToCloudInternal(data).finally(() => {
-        this.syncPromise = null;
-      });
+  private static syncLocalToCloud(
+    data: PeriodData,
+    generation = CoupleCacheEpoch.get(),
+  ): Promise<PeriodData> {
+    if (!this.syncPromise || this.syncGeneration !== generation) {
+      this.syncGeneration = generation;
+      this.syncPromise = this.syncLocalToCloudInternal(data, generation).finally(
+        () => {
+          if (this.syncGeneration === generation) {
+            this.syncPromise = null;
+          }
+        },
+      );
     }
     return this.syncPromise;
   }
 
-  private static async syncLocalToCloudInternal(data: PeriodData): Promise<PeriodData> {
+  private static async syncLocalToCloudInternal(
+    data: PeriodData,
+    generation: number,
+  ): Promise<PeriodData> {
+    this.assertCurrent(generation);
     const deletedIds = await this.getDeletedIds();
     for (const id of deletedIds) {
+      this.assertCurrent(generation);
       try {
         await this.requestCloud(`${PAIRNEST_API.period}/records/${encodeURIComponent(id)}`, {
           method: "DELETE",
@@ -316,21 +358,29 @@ export class PeriodStorage {
       }
     }
 
+    this.assertCurrent(generation);
     const body = await this.requestCloud(PAIRNEST_API.periodSync, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(normalizeData(data)),
     });
 
+    this.assertCurrent(generation);
     if (body.skipped?.length) {
       console.warn("Some period records were skipped during sync:", body.skipped);
     }
 
     const synced = normalizeData(body.data);
-    await this.saveLocalData(synced, false);
-    await this.clearDeletedIds();
-    await this.markCloudMigrated();
+    await this.saveLocalData(synced, false, generation);
+    await this.clearDeletedIds(generation);
+    await this.markCloudMigrated(generation);
     return synced;
+  }
+
+  private static assertCurrent(generation: number) {
+    if (!CoupleCacheEpoch.isCurrent(generation)) {
+      throw new PeriodStaleCacheError();
+    }
   }
 
   private static async createCloudRecord(
@@ -464,6 +514,7 @@ export class PeriodStorage {
   }
 
   private static canUseLocalFallback(error: unknown) {
+    if (error instanceof PeriodStaleCacheError) return false;
     return !(error instanceof PeriodCloudError && error.status);
   }
 
@@ -475,7 +526,10 @@ export class PeriodStorage {
     return (await AsyncStorage.getItem(DIRTY_KEY)) === "1";
   }
 
-  private static async markCloudMigrated() {
+  private static async markCloudMigrated(
+    generation = CoupleCacheEpoch.get(),
+  ) {
+    this.assertCurrent(generation);
     await AsyncStorage.setItem(CLOUD_MIGRATED_KEY, "1");
   }
 
@@ -488,13 +542,21 @@ export class PeriodStorage {
     }
   }
 
-  private static async addDeletedId(id: string) {
+  private static async addDeletedId(
+    id: string,
+    generation = CoupleCacheEpoch.get(),
+  ) {
+    this.assertCurrent(generation);
     const ids = new Set(await this.getDeletedIds());
     ids.add(id);
     await AsyncStorage.setItem(DELETED_IDS_KEY, JSON.stringify([...ids]));
+    this.assertCurrent(generation);
   }
 
-  private static async clearDeletedIds() {
+  private static async clearDeletedIds(
+    generation = CoupleCacheEpoch.get(),
+  ) {
+    this.assertCurrent(generation);
     await AsyncStorage.removeItem(DELETED_IDS_KEY);
   }
 }

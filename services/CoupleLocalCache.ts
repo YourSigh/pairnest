@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from "expo-file-system/legacy";
 
 import { BackgroundMessageSyncStorage } from "@/services/BackgroundMessageSyncStorage";
+import { CoupleCacheEpoch } from "@/services/CoupleCacheEpoch";
 
 /**
  * Local caches that store couple-owned cloud data. Clearing these on session
@@ -28,13 +29,23 @@ async function deleteCacheDirectory(path: string | null) {
 }
 
 export class CoupleLocalCache {
+  static getGeneration() {
+    return CoupleCacheEpoch.get();
+  }
+
+  static isCurrent(generation: number) {
+    return CoupleCacheEpoch.isCurrent(generation);
+  }
+
   static async clearCoupleScopedData() {
+    CoupleCacheEpoch.bump();
     await AsyncStorage.multiRemove([...COUPLE_SCOPED_KEYS]);
     BackgroundMessageSyncStorage.clearMemoryCache();
 
     // Lazy requires avoid AuthService ↔ PeriodStorage / Chat* cycles.
     try {
-      const { PeriodStorage } = require("@/services/PeriodStorage") as typeof import("@/services/PeriodStorage");
+      const { PeriodStorage } =
+        require("@/services/PeriodStorage") as typeof import("@/services/PeriodStorage");
       PeriodStorage.clearMemoryCache();
     } catch {
       // ignore
@@ -50,6 +61,20 @@ export class CoupleLocalCache {
       const { ChatVideoCache } =
         require("@/services/ChatVideoCache") as typeof import("@/services/ChatVideoCache");
       await ChatVideoCache.clearAll();
+    } catch {
+      // ignore
+    }
+    try {
+      const { ChatStickerService } =
+        require("@/services/ChatStickerService") as typeof import("@/services/ChatStickerService");
+      await ChatStickerService.clearAll();
+    } catch {
+      // ignore
+    }
+    try {
+      const { ChatService } =
+        require("@/services/ChatService") as typeof import("@/services/ChatService");
+      await ChatService.clearCoupleScopedCaches();
     } catch {
       // ignore
     }

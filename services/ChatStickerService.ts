@@ -4,6 +4,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import { PAIRNEST_API } from "@/constants/api";
 import type { ChatRole } from "@/constants/chat";
 import { AuthService } from "@/services/AuthService";
+import { CoupleCacheEpoch } from "@/services/CoupleCacheEpoch";
 
 export type ChatExpressionTab = "emoji" | "sticker";
 
@@ -89,16 +90,23 @@ async function downloadPersistent(
   if (existing) return { uri: await existing };
 
   const download = (async () => {
+    const generation = CoupleCacheEpoch.get();
     await FileSystem.makeDirectoryAsync(STICKER_DIRECTORY, {
       intermediates: true,
     });
     const temporaryUri = `${targetUri}.download`;
     await FileSystem.deleteAsync(temporaryUri, { idempotent: true });
     try {
+      if (!CoupleCacheEpoch.isCurrent(generation)) {
+        throw new Error("情侣空间已切换，已取消表情缓存");
+      }
       const token = await AuthService.getAccessToken();
       const result = await FileSystem.downloadAsync(remoteUri, temporaryUri, {
         headers: { Authorization: `Bearer ${token}` },
       });
+      if (!CoupleCacheEpoch.isCurrent(generation)) {
+        throw new Error("情侣空间已切换，已取消表情缓存");
+      }
       if (result.status < 200 || result.status >= 300) {
         throw new Error(`下载表情失败（${result.status}）`);
       }
@@ -111,6 +119,10 @@ async function downloadPersistent(
       }
       await FileSystem.deleteAsync(targetUri, { idempotent: true });
       await FileSystem.moveAsync({ from: temporaryUri, to: targetUri });
+      if (!CoupleCacheEpoch.isCurrent(generation)) {
+        await FileSystem.deleteAsync(targetUri, { idempotent: true });
+        throw new Error("情侣空间已切换，已取消表情缓存");
+      }
       return targetUri;
     } catch (error) {
       await FileSystem.deleteAsync(temporaryUri, { idempotent: true });
@@ -236,6 +248,15 @@ export const ChatStickerService = {
       await FileSystem.moveAsync({ from: temporaryUri, to: targetUri });
     } finally {
       await FileSystem.deleteAsync(temporaryUri, { idempotent: true });
+    }
+  },
+
+  async clearAll() {
+    downloads.clear();
+    if (STICKER_DIRECTORY) {
+      await FileSystem.deleteAsync(STICKER_DIRECTORY, { idempotent: true }).catch(
+        () => undefined,
+      );
     }
   },
 };

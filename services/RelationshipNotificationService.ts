@@ -3,6 +3,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { PAIRNEST_API } from "@/constants/api";
 import type { ChatRole } from "@/constants/chat";
 import { AuthService } from "@/services/AuthService";
+import { CoupleCacheEpoch } from "@/services/CoupleCacheEpoch";
 
 export const DEFAULT_RELATIONSHIP_NOTIFICATION_COPY =
   "今天也比昨天更喜欢你一点";
@@ -65,7 +66,12 @@ async function readLocal(role: ChatRole) {
 }
 
 async function saveLocal(role: ChatRole, data: RelationshipNotificationData) {
-  await AsyncStorage.setItem(storageKey(role), JSON.stringify(data));
+  const generation = CoupleCacheEpoch.get();
+  const key = storageKey(role);
+  await AsyncStorage.setItem(key, JSON.stringify(data));
+  if (!CoupleCacheEpoch.isCurrent(generation)) {
+    await AsyncStorage.removeItem(key);
+  }
 }
 
 async function request(input: RequestInfo | URL, init: RequestInit = {}) {

@@ -96,7 +96,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   ]);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [openCoupleCreate, setOpenCoupleCreate] = useState(true);
+  const [openCoupleCreate, setOpenCoupleCreate] = useState(false);
 
   useEffect(() => {
     if (auth.serverUrl) setServerUrl(auth.serverUrl);
@@ -128,6 +128,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
       return;
     }
     let cancelled = false;
+    setOpenCoupleCreate(false);
     void auth
       .getStoredRecoveryCredential()
       .then((credential) => {
@@ -142,7 +143,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
         if (!cancelled) setOpenCoupleCreate(capabilities.openCoupleCreate);
       })
       .catch(() => {
-        if (!cancelled) setOpenCoupleCreate(true);
+        // Fail closed: hide create until the server capabilities are known.
+        if (!cancelled) setOpenCoupleCreate(false);
       });
     return () => {
       cancelled = true;

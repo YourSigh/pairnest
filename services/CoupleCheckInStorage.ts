@@ -4,6 +4,7 @@ import { PAIRNEST_API } from "@/constants/api";
 import type { CoupleCheckInMood } from "@/constants/check-in";
 import { DEFAULT_MOOD } from "@/constants/check-in";
 import { AuthService } from "@/services/AuthService";
+import { CoupleCacheEpoch } from "@/services/CoupleCacheEpoch";
 import type { ChatRole } from "@/constants/chat";
 
 export type CoupleCheckInRole = ChatRole;
@@ -194,7 +195,11 @@ export class CoupleCheckInStorage {
   }
 
   private static async saveLocalData(data: CoupleCheckInData): Promise<void> {
+    const generation = CoupleCacheEpoch.get();
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeData(data)));
+    if (!CoupleCacheEpoch.isCurrent(generation)) {
+      await AsyncStorage.removeItem(STORAGE_KEY);
+    }
   }
 
   private static async requestCloud(

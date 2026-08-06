@@ -1,5 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
+import { CoupleCacheEpoch } from "@/services/CoupleCacheEpoch";
+
 const LAST_OBSERVED_AT_KEY =
   "pairnest.backgroundMessaging.lastObservedMessageAt";
 
@@ -18,9 +20,13 @@ export class BackgroundMessageSyncStorage {
       return this.cachedLastObservedAt;
     }
     if (!this.loading) {
+      const generation = CoupleCacheEpoch.get();
       this.loading = AsyncStorage.getItem(LAST_OBSERVED_AT_KEY)
         .then(normalizeTimestamp)
         .then((value) => {
+          if (!CoupleCacheEpoch.isCurrent(generation)) {
+            return null;
+          }
           this.cachedLastObservedAt = value;
           return value;
         })
@@ -35,13 +41,17 @@ export class BackgroundMessageSyncStorage {
     const nextTime = new Date(createdAt).getTime();
     if (!Number.isFinite(nextTime)) return;
 
+    const generation = CoupleCacheEpoch.get();
     this.pendingWrite = this.pendingWrite
       .catch(() => undefined)
       .then(async () => {
+        if (!CoupleCacheEpoch.isCurrent(generation)) return;
         const current = await this.getLastObservedAt();
+        if (!CoupleCacheEpoch.isCurrent(generation)) return;
         if (current && new Date(current).getTime() >= nextTime) return;
 
         await AsyncStorage.setItem(LAST_OBSERVED_AT_KEY, createdAt);
+        if (!CoupleCacheEpoch.isCurrent(generation)) return;
         this.cachedLastObservedAt = createdAt;
       });
     await this.pendingWrite;

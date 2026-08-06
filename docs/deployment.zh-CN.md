@@ -44,6 +44,7 @@ openssl rand -hex 32
 | `PAIRNEST_DB_PASSWORD` / `PAIRNEST_DB_ROOT_PASSWORD` | 必填 | 两个相互独立的 MySQL 密码 |
 | `PAIRNEST_AUTH_TOKEN_SECRET` | 必填 | 签发访问令牌，并用于认证失败记录的伪名化 |
 | `PAIRNEST_ALLOW_OPEN_COUPLE_CREATE` | `true` | 是否允许匿名创建情侣空间；公网实例可设为 `false` |
+| `PAIRNEST_ALLOW_LEGACY_SHARED_SECRET_ACTIVATE` | `true` | 是否允许旧版 shared secret 激活 `legacy-default-couple`；迁移完成后建议设为 `false` |
 | `PAIRNEST_API_BIND` / `PAIRNEST_API_PORT` | `127.0.0.1` / `4000` | 宿主机监听地址和端口 |
 | `PAIRNEST_CORS_ORIGIN` | `*` | 浏览器来源，多个值用英文逗号分隔 |
 | `PAIRNEST_TRUST_PROXY` | `false` | 是否信任代理提供的客户端地址和协议 |

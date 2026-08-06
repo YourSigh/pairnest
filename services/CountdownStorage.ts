@@ -11,6 +11,7 @@ import {
   normalizeLunarDate,
 } from "@/services/LunarCalendar";
 import { RoleStorage } from "@/services/RoleStorage";
+import { CoupleCacheEpoch } from "@/services/CoupleCacheEpoch";
 
 export type CountdownCalendarType = "solar" | "lunar";
 export type CountdownRepeatMode = "none" | "yearly";
@@ -281,11 +282,16 @@ export class CountdownStorage {
     role?: ChatRole,
   ): Promise<void> {
     try {
+      const generation = CoupleCacheEpoch.get();
       const cacheRole = role ?? (await RoleStorage.getRole());
+      const key = getStorageKey(cacheRole);
       await AsyncStorage.setItem(
-        getStorageKey(cacheRole),
+        key,
         JSON.stringify(refreshEventDays(events)),
       );
+      if (!CoupleCacheEpoch.isCurrent(generation)) {
+        await AsyncStorage.removeItem(key);
+      }
     } catch (error) {
       console.error("Error saving events:", error);
       throw error;

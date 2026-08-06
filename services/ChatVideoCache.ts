@@ -3,6 +3,7 @@ import { Image } from "expo-image";
 
 import { PAIRNEST_API } from "@/constants/api";
 import { AuthService } from "@/services/AuthService";
+import { CoupleCacheEpoch } from "@/services/CoupleCacheEpoch";
 
 export type ChatVideoAssetFile = {
   fileName: string;
@@ -127,7 +128,11 @@ export const ChatVideoCache = {
     )}${extension(video.fileName, ".mp4")}`;
     let request = downloads.get(targetUri);
     if (!request) {
+      const generation = CoupleCacheEpoch.get();
       request = (async () => {
+        if (!CoupleCacheEpoch.isCurrent(generation)) {
+          throw new Error("情侣空间已切换，已取消视频缓存");
+        }
         await FileSystem.makeDirectoryAsync(DOWNLOAD_DIRECTORY, {
           intermediates: true,
         });
@@ -158,6 +163,12 @@ export const ChatVideoCache = {
           if (result.status < 200 || result.status >= 300) {
             throw new Error(`下载视频失败（${result.status}）`);
           }
+        }
+        if (!CoupleCacheEpoch.isCurrent(generation)) {
+          await FileSystem.deleteAsync(targetUri, { idempotent: true }).catch(
+            () => undefined,
+          );
+          throw new Error("情侣空间已切换，已取消视频缓存");
         }
         const info = await FileSystem.getInfoAsync(targetUri);
         if (

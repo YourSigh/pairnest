@@ -4,6 +4,7 @@ import { PAIRNEST_API } from "@/constants/api";
 import type { ChatRole } from "@/constants/chat";
 import { DEFAULT_CHAT_ROLE } from "@/constants/chat";
 import { AuthService } from "@/services/AuthService";
+import { CoupleCacheEpoch } from "@/services/CoupleCacheEpoch";
 
 export type TimelineMood =
   | "sweet"
@@ -284,7 +285,11 @@ export class TimelineStorage {
   }
 
   private static async saveLocalNodes(items: TimelineNode[]): Promise<void> {
+    const generation = CoupleCacheEpoch.get();
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    if (!CoupleCacheEpoch.isCurrent(generation)) {
+      await AsyncStorage.removeItem(STORAGE_KEY);
+    }
   }
 
   private static async requestCloud(

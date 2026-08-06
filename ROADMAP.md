@@ -1,15 +1,19 @@
 # PairNest roadmap
 
-PairNest v0.1 focuses on a stable self-hosted experience for one couple, with a
-standalone MySQL/API deployment and runtime server configuration.
+PairNest v0.1 provides a self-hosted API for multiple independent couples. A
+couple has exactly two server-confirmed member slots, and every business record
+is scoped by `coupleId`. v0.1 also includes expiring invitations, persistent
+recovery keys, revocable device sessions, per-couple storage quotas, and
+couple-level deletion.
 
-The following work is not currently included:
+This is intentionally a small multi-couple model, not a complete account and
+workspace platform. The following work remains out of scope for v0.1:
 
-- Multi-tenant hosting
 - A complete `PairSpace` domain abstraction
-- A persistent `PairInvite` model
+- A persistent `PairInvite` history and management model
 - Invitation links and QR-code onboarding
-- Multiple spaces per account or deployment
+- User accounts that can join or switch among multiple spaces
+- More than two members in one space
 - iOS distribution
 - Bundled Caddy or automatic HTTPS
 - Multi-architecture container publishing
@@ -17,18 +21,21 @@ The following work is not currently included:
 - Automated APK builds attached to GitHub Releases
 - SBOM, provenance, and CodeQL pipelines
 - An encrypted backup and restore system
-- A full rewrite of legacy `female` / `male` database fields
+- A full rewrite of legacy `female` / `male` business-data fields
 - A universal feature-capability system
-- Large directory-layout changes
+- Large directory-layout changes or unrelated refactors
 
 Potential follow-up priorities:
 
-1. Add focused authorization and integration tests.
-2. Document and implement session management and recovery.
+1. Add broader authorization, migration, concurrency, and WebSocket tests.
+2. Add account-level session/device management without weakening the two-slot
+   couple model.
 3. Decide health-record ownership and sharing semantics.
-4. Replace legacy role field names without breaking existing features.
+4. Replace legacy role field names without breaking existing data or clients.
 5. Add opt-in remote notification support for Android and iOS.
 6. Add reproducible release and container publishing workflows.
-7. Add versioned backup, restore, and upgrade tooling.
-8. Upgrade Expo and React Native with regression testing to resolve the
+7. Add versioned, encrypted backup, restore, and upgrade tooling.
+8. Add operator observability and configurable abuse controls for public
+   instances.
+9. Upgrade Expo and React Native with regression testing to resolve the
    inherited mobile dependency advisory backlog.

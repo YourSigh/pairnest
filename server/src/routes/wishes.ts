@@ -13,7 +13,7 @@ import {
   type WishPriority,
   type WishStatus,
 } from '../lib/wishes';
-import { getAuthenticatedRole } from '../middleware/auth';
+import { getAuthenticatedRole, getCoupleId } from '../middleware/auth';
 
 export const wishesRouter = Router();
 
@@ -109,6 +109,7 @@ wishesRouter.post('/', async (req, res) => {
   const item = await prisma.wishItem.create({
     data: {
       id: createWishId(),
+      coupleId: getCoupleId(res),
       title,
       description,
       ownerRole,

@@ -11,7 +11,8 @@ import {
   startTruthOrDareRound,
   TruthOrDareError,
 } from "../lib/truth-or-dare";
-import { getAuthenticatedRole } from "../middleware/auth";
+import { getAuthenticatedRole, getCoupleId } from "../middleware/auth";
+import { coupleRateLimit } from "../middleware/rate-limit";
 import { broadcastTruthOrDareUpdate } from "../ws";
 
 export const truthOrDareRouter = Router();
@@ -29,8 +30,8 @@ function sendGameError(res: Response, error: unknown) {
     .json({ ok: false, code: error.code, message: error.message });
 }
 
-function notify(roundId: string, action: string) {
-  broadcastTruthOrDareUpdate({
+function notify(res: Response, roundId: string, action: string) {
+  broadcastTruthOrDareUpdate(getCoupleId(res), {
     roundId,
     action,
     occurredAt: new Date().toISOString(),
@@ -55,7 +56,7 @@ truthOrDareRouter.post("/rounds", async (req, res) => {
   }
   try {
     const round = await startTruthOrDareRound(role, kind);
-    notify(round.id, "round-started");
+    notify(res, round.id, "round-started");
     res.status(201).json({ ok: true, round });
   } catch (error) {
     sendGameError(res, error);
@@ -64,6 +65,7 @@ truthOrDareRouter.post("/rounds", async (req, res) => {
 
 truthOrDareRouter.post(
   "/rounds/:id/questions/generate",
+  coupleRateLimit("truth-dare-ai", 20, 60 * 60 * 1000),
   async (req, res) => {
     const role = getAuthenticatedRole(res);
     if (!role) {
@@ -72,11 +74,11 @@ truthOrDareRouter.post(
     }
     try {
       const round = await generateTruthOrDareQuestions(
-        req.params.id,
+        String(req.params.id),
         role,
         req.body?.force === true,
       );
-      notify(round.id, "questions-generated");
+      notify(res, round.id, "questions-generated");
       res.json({ ok: true, round });
     } catch (error) {
       sendGameError(res, error);
@@ -88,9 +90,7 @@ truthOrDareRouter.post("/rounds/:id/question", async (req, res) => {
   const role = getAuthenticatedRole(res);
   const questionId = req.body?.questionId;
   if (!role || typeof questionId !== "string" || !questionId) {
-    res
-      .status(400)
-      .json({ ok: false, message: "role 或 questionId 无效" });
+    res.status(400).json({ ok: false, message: "role 或 questionId 无效" });
     return;
   }
   try {
@@ -99,7 +99,7 @@ truthOrDareRouter.post("/rounds/:id/question", async (req, res) => {
       role,
       questionId,
     );
-    notify(round.id, "question-selected");
+    notify(res, round.id, "question-selected");
     res.json({ ok: true, round });
   } catch (error) {
     sendGameError(res, error);
@@ -114,7 +114,7 @@ truthOrDareRouter.post("/rounds/:id/replace", async (req, res) => {
   }
   try {
     const round = await replaceTruthOrDareQuestion(req.params.id, role);
-    notify(round.id, "question-replaced");
+    notify(res, round.id, "question-replaced");
     res.json({ ok: true, round });
   } catch (error) {
     sendGameError(res, error);
@@ -129,7 +129,7 @@ truthOrDareRouter.post("/rounds/:id/complete", async (req, res) => {
   }
   try {
     const round = await completeTruthOrDareRound(req.params.id, role);
-    notify(round.id, "round-completed");
+    notify(res, round.id, "round-completed");
     res.json({ ok: true, round });
   } catch (error) {
     sendGameError(res, error);
@@ -144,7 +144,7 @@ truthOrDareRouter.post("/rounds/:id/cancel", async (req, res) => {
   }
   try {
     const round = await cancelTruthOrDareRound(req.params.id, role);
-    notify(round.id, "round-cancelled");
+    notify(res, round.id, "round-cancelled");
     res.json({ ok: true, round });
   } catch (error) {
     sendGameError(res, error);

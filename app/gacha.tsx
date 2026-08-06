@@ -51,7 +51,6 @@ import {
 } from "@/services/GachaService";
 import { NotificationService } from "@/services/NotificationService";
 import { useRole } from "@/services/RoleContext";
-import { SettingsUnlockStorage } from "@/services/SettingsUnlockStorage";
 
 type CapsuleKind =
   | "立即心动"
@@ -341,27 +340,6 @@ function toLoveCapsule(item: GachaDrawItem): LoveCapsule {
   };
 }
 
-function createArchivePreviewCapsule(): LoveCapsule {
-  return {
-    id: "archive-preview",
-    kind: "典藏彩蛋",
-    icon: "diamond",
-    color: "#FF8A5C",
-    softColor: "#FFF7EE",
-    title: "典藏特效预览",
-    description: "这是一颗只在本机播放的假典藏扭蛋，不会写入记录。",
-    starterTask: "预览模式不会塞进真实池子，也不会通知对方。",
-    partnerTask: "正式抽中时，这里会显示你藏给对方的典藏内容。",
-    duration: "值得收藏",
-    scene: "典藏彩蛋",
-    source: "custom",
-    pool: "limited",
-    eggType: "archive",
-    status: "drawn",
-    rarity: "archive",
-  };
-}
-
 function getRarityAnimationConfig(rarity: GachaRarity) {
   if (rarity === "archive") {
     return {
@@ -436,7 +414,6 @@ function EggEditorModal({
   editing,
   partnerName,
   saving,
-  showArchiveType,
   onClose,
   onSave,
 }: {
@@ -444,7 +421,6 @@ function EggEditorModal({
   editing: GachaEggItem | null;
   partnerName: string;
   saving: boolean;
-  showArchiveType: boolean;
   onClose: () => void;
   onSave: (draft: {
     eggType: GachaEggType;
@@ -461,7 +437,7 @@ function EggEditorModal({
   useEffect(() => {
     if (!visible) return;
     const nextType = editing?.eggType ?? "normal";
-    setEggType(nextType === "archive" && !showArchiveType ? "normal" : nextType);
+    setEggType(nextType);
     setTitle(editing?.title ?? "");
     setDescription(editing?.description ?? "");
     if (!editing?.expiresAt) {
@@ -470,7 +446,7 @@ function EggEditorModal({
       const remaining = new Date(editing.expiresAt).getTime() - Date.now();
       setExpiryDays(remaining > 14 * 86400000 ? 30 : 7);
     }
-  }, [editing, showArchiveType, visible]);
+  }, [editing, visible]);
 
   const submit = () => {
     if (!title.trim()) {
@@ -519,7 +495,9 @@ function EggEditorModal({
           >
             <View style={styles.typeGrid}>
               {(Object.keys(EGG_TYPE_META) as GachaEggType[])
-                .filter((type) => type !== "archive" || showArchiveType || editing?.eggType === "archive")
+                .filter(
+                  (type) => type !== "archive" || editing?.eggType === "archive",
+                )
                 .map((type) => {
                 const meta = EGG_TYPE_META[type];
                 const rarityMeta = RARITY_META[meta.rarity];
@@ -2469,9 +2447,6 @@ export default function GachaScreen() {
   const [pool, setPool] = useState<GachaPool>("limited");
   const [poolDetailsExpanded, setPoolDetailsExpanded] = useState(false);
   const [resultVisible, setResultVisible] = useState(false);
-  const [advancedUnlocked, setAdvancedUnlocked] = useState(false);
-  const [archiveStashEnabled, setArchiveStashEnabled] = useState(false);
-  const [archivePreviewEnabled, setArchivePreviewEnabled] = useState(false);
   const shake = useRef(new Animated.Value(0)).current;
   const handlePull = useRef(new Animated.Value(0)).current;
   const drop = useRef(new Animated.Value(0)).current;
@@ -2501,15 +2476,6 @@ export default function GachaScreen() {
     useCallback(() => {
       void NotificationService.clearPresentedNotifications(["gacha-event"]);
       void loadOverview();
-      void Promise.all([
-        SettingsUnlockStorage.isUnlocked(),
-        SettingsUnlockStorage.isArchiveStashEnabled(),
-        SettingsUnlockStorage.isArchivePreviewEnabled(),
-      ]).then(([unlocked, stashEnabled, previewEnabled]) => {
-        setAdvancedUnlocked(unlocked);
-        setArchiveStashEnabled(stashEnabled);
-        setArchivePreviewEnabled(previewEnabled);
-      });
     }, [loadOverview]),
   );
 
@@ -2543,7 +2509,6 @@ export default function GachaScreen() {
   const poolMeta = GACHA_POOL_META[pool];
   const machineBallColors = useMemo(() => machineColorsForPool(pool), [pool]);
   const isLimitedPool = pool === "limited";
-  const archivePreviewMode = advancedUnlocked && archivePreviewEnabled;
 
   const pickedCapsuleColor = selected?.color ?? "#E8899C";
   const switchPool = useCallback((next: GachaPool) => {
@@ -2574,24 +2539,16 @@ export default function GachaScreen() {
 
   const drawLabel = useMemo(() => {
     if (drawing) return "扭蛋正在滚下来…";
-    if (archivePreviewMode) return "预览典藏特效";
     if (!cloudAvailable) return "等待新版服务";
     if (!isLimitedPool) return "随便扭一颗";
     if (!overview.eligibility.supported) return "等待新版服务";
     if (!overview.eligibility.checkedIn) return "打卡解锁 1 次";
     if (!overview.eligibility.canDraw) return "今天已经抽过啦";
     return overview.eligibility.returnUsed ? "使用重抽机会" : "扭一颗看看";
-  }, [archivePreviewMode, cloudAvailable, drawing, isLimitedPool, overview.eligibility]);
+  }, [cloudAvailable, drawing, isLimitedPool, overview.eligibility]);
 
   const openCreate = () => {
     setEditingEgg(null);
-    void Promise.all([
-      SettingsUnlockStorage.isUnlocked(),
-      SettingsUnlockStorage.isArchiveStashEnabled(),
-    ]).then(([unlocked, stashEnabled]) => {
-      setAdvancedUnlocked(unlocked);
-      setArchiveStashEnabled(stashEnabled);
-    });
     setEditorVisible(true);
   };
 
@@ -2685,66 +2642,8 @@ export default function GachaScreen() {
     [drop, rarityFx, reveal],
   );
 
-  const runArchivePreview = useCallback(() => {
-    if (drawing) return;
-    setDrawing(true);
-    setSelected(null);
-    shake.setValue(0);
-    handlePull.setValue(0);
-    drop.setValue(0);
-    reveal.setValue(0);
-    rarityFx.setValue(0);
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
-
-    const rattles = Array.from({ length: 12 }, (_, index) =>
-      Animated.timing(shake, {
-        toValue: index % 2 === 0 ? 1.18 : -1.18,
-        duration: 56,
-        easing: Easing.linear,
-        useNativeDriver: true,
-      }),
-    );
-    rattles.push(
-      Animated.timing(shake, {
-        toValue: 0,
-        duration: 90,
-        useNativeDriver: true,
-      }),
-    );
-
-    Animated.parallel([
-      Animated.sequence(rattles),
-      Animated.sequence([
-        Animated.timing(handlePull, {
-          toValue: 1,
-          duration: 300,
-          easing: Easing.inOut(Easing.cubic),
-          useNativeDriver: true,
-        }),
-        Animated.delay(180),
-        Animated.spring(handlePull, {
-          toValue: 0,
-          damping: 7,
-          stiffness: 168,
-          mass: 0.7,
-          useNativeDriver: true,
-        }),
-      ]),
-    ]).start(({ finished }) => {
-      if (!finished) {
-        setDrawing(false);
-        return;
-      }
-      playCapsuleReveal(createArchivePreviewCapsule(), () => setDrawing(false));
-    });
-  }, [drawing, drop, handlePull, playCapsuleReveal, rarityFx, reveal, shake]);
-
   const handleDraw = useCallback(() => {
     if (drawing) return;
-    if (archivePreviewMode) {
-      runArchivePreview();
-      return;
-    }
     if (!cloudAvailable) {
       toast.show({ message: "新版扭蛋服务部署后才能抽取", icon: "cloud-offline-outline" });
       return;
@@ -2858,7 +2757,6 @@ export default function GachaScreen() {
       playCapsuleReveal(nextCapsule, () => setDrawing(false));
     });
   }, [
-    archivePreviewMode,
     cloudAvailable,
     drawing,
     drop,
@@ -2872,7 +2770,6 @@ export default function GachaScreen() {
     reveal,
     role,
     router,
-    runArchivePreview,
     shake,
     toast,
   ]);
@@ -3130,15 +3027,8 @@ export default function GachaScreen() {
               <ThemedText style={styles.drawButtonText}>{drawLabel}</ThemedText>
             </LinearGradient>
           </TouchableOpacity>
-          <ThemedText
-            style={[
-              styles.drawHint,
-              archivePreviewMode && styles.archivePreviewHint,
-            ]}
-          >
-            {archivePreviewMode
-              ? "预览模式：不消耗次数，不保存记录，也不会通知对方"
-              : "也可以直接点击右侧摇杆"}
+          <ThemedText style={styles.drawHint}>
+            也可以直接点击右侧摇杆
           </ThemedText>
 
           <View style={styles.machineActions}>
@@ -3220,7 +3110,6 @@ export default function GachaScreen() {
         editing={editingEgg}
         partnerName={partnerName}
         saving={savingEgg}
-        showArchiveType={advancedUnlocked && archiveStashEnabled}
         onClose={() => {
           if (!savingEgg) setEditorVisible(false);
         }}
@@ -3240,13 +3129,6 @@ export default function GachaScreen() {
         }}
         onEdit={(item) => {
           setHistoryVisible(false);
-          void Promise.all([
-            SettingsUnlockStorage.isUnlocked(),
-            SettingsUnlockStorage.isArchiveStashEnabled(),
-          ]).then(([unlocked, stashEnabled]) => {
-            setAdvancedUnlocked(unlocked);
-            setArchiveStashEnabled(stashEnabled);
-          });
           setEditingEgg(item);
           setEditorVisible(true);
         }}
@@ -4451,10 +4333,6 @@ const styles = createThemedStyleSheet({
     color: AppColors.textTertiary,
     fontSize: 11,
     lineHeight: 16,
-  },
-  archivePreviewHint: {
-    color: "#FF8A5C",
-    fontWeight: "800",
   },
   resultRevealBackdrop: {
     flex: 1,

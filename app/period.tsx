@@ -572,7 +572,7 @@ export default function PeriodScreen() {
           {status.daysLate > 0 && (
             <ThemedText style={styles.lateHint}>
               已暂停后续周期预测，
-              {isReadOnly ? "女方记录" : "记录"}新经期后会自动更新
+              {isReadOnly ? "对方记录" : "记录"}新经期后会自动更新
             </ThemedText>
           )}
         </View>

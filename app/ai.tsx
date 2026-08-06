@@ -245,7 +245,7 @@ export default function AiScreen() {
               style={styles.input}
               value={input}
               onChangeText={setInput}
-              placeholder="提问有关宝宝的事情..."
+              placeholder="提问有关你们的事情..."
               placeholderTextColor={AppColors.textTertiary}
               multiline
               maxLength={4000}

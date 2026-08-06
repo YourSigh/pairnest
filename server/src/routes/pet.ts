@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { Router } from "express";
 import { prisma } from "../db";
 import { getAuthenticatedRole } from "../middleware/auth";
+import { requireCurrentCoupleId } from "../lib/tenant-context";
 import {
   clamp,
   decayedStats,
@@ -49,9 +50,10 @@ function createActivityId() {
 }
 
 async function ensurePet() {
+  const coupleId = requireCurrentCoupleId();
   return prisma.couplePet.upsert({
-    where: { id: 1 },
-    create: { id: 1 },
+    where: { coupleId },
+    create: { coupleId },
     update: {},
   });
 }
@@ -85,19 +87,19 @@ async function buildSnapshot() {
     stats.energy !== pet.energy
   ) {
     pet = await prisma.couplePet.update({
-      where: { id: 1 },
+      where: { id: pet.id },
       data: { ...stats, stateAt: new Date() },
     });
   }
 
   const [activities, todayActivities] = await Promise.all([
     prisma.petActivity.findMany({
-      where: { petId: 1 },
+      where: { petId: pet.id },
       orderBy: { createdAt: "desc" },
       take: 20,
     }),
     prisma.petActivity.findMany({
-      where: { petId: 1, createdAt: { gte: startOfShanghaiDay() } },
+      where: { petId: pet.id, createdAt: { gte: startOfShanghaiDay() } },
       orderBy: { createdAt: "asc" },
     }),
   ]);
@@ -155,7 +157,7 @@ async function buildSnapshot() {
   ]));
   if (nextUnlocked.length !== unlocked.length) {
     await prisma.couplePet.update({
-      where: { id: 1 },
+      where: { id: pet.id },
       data: { unlockedJson: JSON.stringify(nextUnlocked) },
     });
   }
@@ -192,12 +194,12 @@ petRouter.patch("/", async (req, res) => {
     res.status(400).json({ ok: false, message: "昵称需要是 1～12 个字" });
     return;
   }
-  await ensurePet();
+  const pet = await ensurePet();
   await prisma.$transaction([
-    prisma.couplePet.update({ where: { id: 1 }, data: { name } }),
+    prisma.couplePet.update({ where: { id: pet.id }, data: { name } }),
     prisma.petActivity.create({
       data: {
-        id: createActivityId(), petId: 1, role, action: "rename",
+        id: createActivityId(), coupleId: requireCurrentCoupleId(), petId: pet.id, role, action: "rename",
         message: `给小狗取名叫「${name}」`,
       },
     }),
@@ -213,7 +215,8 @@ petRouter.post("/interactions", async (req, res) => {
     return;
   }
 
-  const current = await ensurePet();
+  const pet = await ensurePet();
+  const current = pet;
   const stats = decayedStats(current);
   const effect = PET_ACTIONS[action];
   const facilityKey: PetFacilityKey | null = ["feed", "snack"].includes(action)
@@ -223,7 +226,7 @@ petRouter.post("/interactions", async (req, res) => {
       : null;
   const facility = facilityKey
     ? await prisma.petFacility.findUnique({
-        where: { petId_facilityKey: { petId: 1, facilityKey } },
+        where: { coupleId_petId_facilityKey: { coupleId: requireCurrentCoupleId(), petId: current.id, facilityKey } },
       })
     : null;
   const facilityLevel = facility?.level ?? 1;
@@ -250,7 +253,7 @@ petRouter.post("/interactions", async (req, res) => {
   const today = shanghaiDate();
   const yesterday = shanghaiDate(new Date(Date.now() - 86_400_000));
   const todayActions = await prisma.petActivity.findMany({
-    where: { petId: 1, role, createdAt: { gte: startOfShanghaiDay() }, action: { in: CARE_ACTIONS } },
+    where: { petId: pet.id, role, createdAt: { gte: startOfShanghaiDay() }, action: { in: CARE_ACTIONS } },
   });
   const fullReward = todayActions.length < 8;
   const xpEarned = fullReward ? effect.xp : 1;
@@ -261,7 +264,7 @@ petRouter.post("/interactions", async (req, res) => {
   const wishBonus = current.wishCompletedDate !== today && wish.action === action ? wish.reward : 0;
   const otherRoleVisited = await prisma.petActivity.findFirst({
     where: {
-      petId: 1,
+      petId: pet.id,
       role: role === "female" ? "male" : "female",
       createdAt: { gte: startOfShanghaiDay() },
       action: { in: CARE_ACTIONS },
@@ -278,7 +281,7 @@ petRouter.post("/interactions", async (req, res) => {
 
   await prisma.$transaction([
     prisma.couplePet.update({
-      where: { id: 1 },
+      where: { id: pet.id },
       data: {
         hunger: clamp(stats.hunger + effect.hunger + (facilityKey === "bowl" ? facilityBonus : 0)),
         happiness: clamp(stats.happiness + effect.happiness),
@@ -300,7 +303,7 @@ petRouter.post("/interactions", async (req, res) => {
     }),
     prisma.petActivity.create({
       data: {
-        id: createActivityId(), petId: 1, role, action,
+        id: createActivityId(), coupleId: requireCurrentCoupleId(), petId: pet.id, role, action,
         message: effect.message.replace("团团", current.name),
         xpEarned, coinsUsed: effect.cost,
       },
@@ -330,12 +333,12 @@ petRouter.post("/daily-reward", async (req, res) => {
   const reward = 15 + Math.min(pet.careStreak, 7) * 3;
   await prisma.$transaction([
     prisma.couplePet.update({
-      where: { id: 1 },
+      where: { id: pet.id },
       data: { coins: { increment: reward }, lastDailyClaimDate: today },
     }),
     prisma.petActivity.create({
       data: {
-        id: createActivityId(), petId: 1, role, action: "daily",
+        id: createActivityId(), coupleId: requireCurrentCoupleId(), petId: pet.id, role, action: "daily",
         message: `领取了今日见面礼，获得 ${reward} 爱心币`,
       },
     }),
@@ -367,7 +370,7 @@ petRouter.post("/quests/:id/claim", async (req, res) => {
   const nextClaims = [...currentClaims, questId];
   await prisma.$transaction([
     prisma.couplePet.update({
-      where: { id: 1 },
+      where: { id: pet.id },
       data: {
         coins: { increment: quest.reward },
         questClaimDate: today,
@@ -376,7 +379,7 @@ petRouter.post("/quests/:id/claim", async (req, res) => {
     }),
     prisma.petActivity.create({
       data: {
-        id: createActivityId(), petId: 1, role, action: "quest",
+        id: createActivityId(), coupleId: requireCurrentCoupleId(), petId: pet.id, role, action: "quest",
         message: `完成「${quest.title}」，获得 ${quest.reward} 爱心币`,
       },
     }),
@@ -429,25 +432,25 @@ function toLetterDto(letter: {
 }
 
 async function buildMailbox(role: "female" | "male") {
+  const pet = await ensurePet();
   const [active, history, sentToday] = await Promise.all([
     prisma.petLetter.findFirst({
-      where: { petId: 1, status: { in: ACTIVE_LETTER_STATUSES } },
+      where: { petId: pet.id, status: { in: ACTIVE_LETTER_STATUSES } },
       orderBy: { createdAt: "desc" },
     }),
     prisma.petLetter.findMany({
-      where: { petId: 1, status: "completed" },
+      where: { petId: pet.id, status: "completed" },
       orderBy: { completedAt: "desc" },
       take: 6,
     }),
     prisma.petLetter.count({
       where: {
-        petId: 1,
+        petId: pet.id,
         senderRole: role,
         createdAt: { gte: startOfShanghaiDay() },
       },
     }),
   ]);
-  const pet = await ensurePet();
   return {
     active: active ? toLetterDto(active, role) : null,
     history: history.map((letter) => toLetterDto(letter, role)),
@@ -487,12 +490,13 @@ petRouter.post("/letters", async (req, res) => {
     res.status(400).json({ ok: false, message: "悄悄话需要是 1～80 个字" });
     return;
   }
+  const pet = await ensurePet();
   const [active, sentToday] = await Promise.all([
     prisma.petLetter.findFirst({
-      where: { petId: 1, status: { in: ACTIVE_LETTER_STATUSES } },
+      where: { petId: pet.id, status: { in: ACTIVE_LETTER_STATUSES } },
     }),
     prisma.petLetter.count({
-      where: { petId: 1, senderRole: role, createdAt: { gte: startOfShanghaiDay() } },
+      where: { petId: pet.id, senderRole: role, createdAt: { gte: startOfShanghaiDay() } },
     }),
   ]);
   if (active) {
@@ -503,11 +507,11 @@ petRouter.post("/letters", async (req, res) => {
     res.status(409).json({ ok: false, message: "宠物今天已经认真送过两趟信啦" });
     return;
   }
-  await ensurePet();
   await prisma.petLetter.create({
     data: {
       id: createActivityId(),
-      petId: 1,
+      coupleId: requireCurrentCoupleId(),
+      petId: pet.id,
       senderRole: role,
       recipientRole: role === "female" ? "male" : "female",
       theme,
@@ -550,7 +554,7 @@ petRouter.post("/letters/:id/open", async (req, res) => {
         data: { status: "completed", completedAt: new Date() },
       }),
       prisma.couplePet.update({
-        where: { id: 1 },
+        where: { id: pet.id },
         data: {
           postmanTrips: { increment: 1 },
           affection: { increment: 5 },
@@ -562,7 +566,7 @@ petRouter.post("/letters/:id/open", async (req, res) => {
       }),
       prisma.petActivity.create({
         data: {
-          id: createActivityId(), petId: 1, role, action: "mail",
+          id: createActivityId(), coupleId: requireCurrentCoupleId(), petId: pet.id, role, action: "mail",
           message: `完成了第 ${pet.postmanTrips + 1} 趟宠物邮差旅程`,
           xpEarned: xp,
         },
@@ -616,7 +620,7 @@ petRouter.post("/letters/:id/reply", async (req, res) => {
       },
     }),
     prisma.couplePet.update({
-      where: { id: 1 },
+      where: { id: pet.id },
       data: responseKind === "hug"
         ? { happiness: clamp(pet.happiness + 4) }
         : responseKind === "cookie"
@@ -630,9 +634,9 @@ petRouter.post("/letters/:id/reply", async (req, res) => {
 async function buildRoom() {
   const pet = await ensurePet();
   const [ownedItems, placements, facilities] = await Promise.all([
-    prisma.petOwnedItem.findMany({ where: { petId: 1 }, orderBy: { acquiredAt: "asc" } }),
-    prisma.petRoomPlacement.findMany({ where: { petId: 1, scene: "room" } }),
-    prisma.petFacility.findMany({ where: { petId: 1 } }),
+    prisma.petOwnedItem.findMany({ where: { petId: pet.id }, orderBy: { acquiredAt: "asc" } }),
+    prisma.petRoomPlacement.findMany({ where: { petId: pet.id, scene: "room" } }),
+    prisma.petFacility.findMany({ where: { petId: pet.id } }),
   ]);
   const owned = new Set(ownedItems.map((item) => item.itemKey));
   const equipped = new Set(placements.map((item) => item.itemKey));
@@ -681,13 +685,13 @@ petRouter.post("/shop/purchases", async (req, res) => {
     res.status(404).json({ ok: false, message: "这件家具暂时没有上架" });
     return;
   }
-  await ensurePet();
+  const pet = await ensurePet();
   try {
     await prisma.$transaction(async (tx) => {
       try {
         await tx.petOwnedItem.create({
           data: {
-            id: createActivityId(), petId: 1, itemKey,
+            id: createActivityId(), coupleId: requireCurrentCoupleId(), petId: pet.id, itemKey,
             source: "purchase", acquiredByRole: role,
           },
         });
@@ -698,18 +702,18 @@ petRouter.post("/shop/purchases", async (req, res) => {
         throw error;
       }
       const deducted = await tx.couplePet.updateMany({
-        where: { id: 1, coins: { gte: item.price } },
+        where: { id: pet.id, coins: { gte: item.price } },
         data: { coins: { decrement: item.price } },
       });
       if (deducted.count !== 1) throw new Error(ECONOMY_ERRORS.notEnoughCoins);
       await tx.petRoomPlacement.upsert({
-        where: { petId_scene_slotKey: { petId: 1, scene: "room", slotKey: item.slot } },
-        create: { petId: 1, scene: "room", slotKey: item.slot, itemKey, updatedByRole: role },
+        where: { coupleId_petId_scene_slotKey: { coupleId: requireCurrentCoupleId(), petId: pet.id, scene: "room", slotKey: item.slot } },
+        create: { coupleId: requireCurrentCoupleId(), petId: pet.id, scene: "room", slotKey: item.slot, itemKey, updatedByRole: role },
         update: { itemKey, updatedByRole: role },
       });
       await tx.petActivity.create({
         data: {
-          id: createActivityId(), petId: 1, role, action: "decorate",
+          id: createActivityId(), coupleId: requireCurrentCoupleId(), petId: pet.id, role, action: "decorate",
           message: `买下「${item.name}」并布置到了房间`, coinsUsed: item.price,
         },
       });
@@ -740,8 +744,9 @@ petRouter.put("/room/slots/:slot", async (req, res) => {
     return;
   }
   if (shouldClear) {
+    const pet = await ensurePet();
     await prisma.petRoomPlacement.deleteMany({
-      where: { petId: 1, scene: "room", slotKey: slot },
+      where: { petId: pet.id, scene: "room", slotKey: slot },
     });
     res.json({ ok: true, room: await buildRoom() });
     return;
@@ -751,16 +756,17 @@ petRouter.put("/room/slots/:slot", async (req, res) => {
     res.status(400).json({ ok: false, message: "家具不能放在这个位置" });
     return;
   }
+  const pet = await ensurePet();
   const owned = await prisma.petOwnedItem.findUnique({
-    where: { petId_itemKey: { petId: 1, itemKey } },
+    where: { coupleId_petId_itemKey: { coupleId: requireCurrentCoupleId(), petId: pet.id, itemKey } },
   });
   if (!owned) {
     res.status(409).json({ ok: false, message: "需要先把这件家具带回家" });
     return;
   }
   await prisma.petRoomPlacement.upsert({
-    where: { petId_scene_slotKey: { petId: 1, scene: "room", slotKey: slot } },
-    create: { petId: 1, scene: "room", slotKey: slot, itemKey, updatedByRole: role },
+    where: { coupleId_petId_scene_slotKey: { coupleId: requireCurrentCoupleId(), petId: pet.id, scene: "room", slotKey: slot } },
+    create: { coupleId: requireCurrentCoupleId(), petId: pet.id, scene: "room", slotKey: slot, itemKey, updatedByRole: role },
     update: { itemKey, updatedByRole: role },
   });
   res.json({ ok: true, room: await buildRoom() });
@@ -773,9 +779,9 @@ petRouter.post("/facilities/:key/upgrade", async (req, res) => {
     res.status(400).json({ ok: false, message: "升级项目无效" });
     return;
   }
-  await ensurePet();
+  const pet = await ensurePet();
   const current = await prisma.petFacility.findUnique({
-    where: { petId_facilityKey: { petId: 1, facilityKey: key } },
+    where: { coupleId_petId_facilityKey: { coupleId: requireCurrentCoupleId(), petId: pet.id, facilityKey: key } },
   });
   const level = current?.level ?? 1;
   const next = PET_FACILITIES[key][level];
@@ -789,7 +795,7 @@ petRouter.post("/facilities/:key/upgrade", async (req, res) => {
         const upgraded = await tx.petFacility.updateMany({
           where: {
             id: current.id,
-            petId: 1,
+            petId: pet.id,
             facilityKey: key,
             level,
           },
@@ -805,7 +811,8 @@ petRouter.post("/facilities/:key/upgrade", async (req, res) => {
         try {
           await tx.petFacility.create({
             data: {
-              petId: 1,
+              coupleId: requireCurrentCoupleId(),
+              petId: pet.id,
               facilityKey: key,
               level: 2,
               updatedByRole: role,
@@ -819,13 +826,13 @@ petRouter.post("/facilities/:key/upgrade", async (req, res) => {
         }
       }
       const deducted = await tx.couplePet.updateMany({
-        where: { id: 1, coins: { gte: next.cost } },
+        where: { id: pet.id, coins: { gte: next.cost } },
         data: { coins: { decrement: next.cost } },
       });
       if (deducted.count !== 1) throw new Error(ECONOMY_ERRORS.notEnoughCoins);
       await tx.petActivity.create({
         data: {
-          id: createActivityId(), petId: 1, role, action: "upgrade",
+          id: createActivityId(), coupleId: requireCurrentCoupleId(), petId: pet.id, role, action: "upgrade",
           message: `把${key === "bowl" ? "饭盆" : "狗窝"}升级成「${next.name}」`,
           coinsUsed: next.cost,
         },

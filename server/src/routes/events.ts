@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { isChatRole, type ChatRole } from '../lib/chat';
 import { calculateDays } from '../lib/dates';
-import { getAuthenticatedRole } from '../middleware/auth';
+import { getAuthenticatedRole, getCoupleId } from '../middleware/auth';
 
 type CountdownCalendarType = 'solar' | 'lunar';
 type CountdownRepeatMode = 'none' | 'yearly';
@@ -284,6 +284,7 @@ eventsRouter.post('/', async (req, res) => {
   const item = await prisma.countdownEvent.create({
     data: {
       id: `event-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      coupleId: getCoupleId(res),
       ownerRole: role,
       title: payload.title ?? '未命名纪念日',
       startDate: payload.startDate!,

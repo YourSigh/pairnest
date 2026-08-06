@@ -2,6 +2,7 @@ import type { VanishingTicTacToeGame } from "@prisma/client";
 import { randomInt } from "crypto";
 
 import { prisma } from "../db";
+import { requireCurrentCoupleId } from "./tenant-context";
 import { isChatRole, type ChatRole } from "./chat";
 
 export type TicTacToeStatus = "waiting" | "playing" | "finished";
@@ -27,7 +28,6 @@ export type TicTacToeStateDto = {
   updatedAt: string;
 };
 
-const GAME_ID = 1;
 const FIRST_MOVE_REVEAL_MS = 3_200;
 const WINNING_LINES = [
   [0, 1, 2],
@@ -140,10 +140,11 @@ export function toTicTacToeStateDto(game: VanishingTicTacToeGame): TicTacToeStat
 }
 
 export async function getTicTacToeGame() {
+  const coupleId = requireCurrentCoupleId();
   return prisma.vanishingTicTacToeGame.upsert({
-    where: { id: GAME_ID },
+    where: { coupleId },
     update: {},
-    create: { id: GAME_ID },
+    create: { coupleId },
   });
 }
 
@@ -168,7 +169,7 @@ export function setTicTacToeReady(role: ChatRole, ready: boolean) {
     if (femaleReady && maleReady) {
       const starterRole: ChatRole = randomInt(2) === 0 ? "female" : "male";
       return prisma.vanishingTicTacToeGame.update({
-        where: { id: GAME_ID },
+        where: { coupleId: requireCurrentCoupleId() },
         data: {
           status: "playing",
           round: { increment: 1 },
@@ -188,7 +189,7 @@ export function setTicTacToeReady(role: ChatRole, ready: boolean) {
     }
 
     return prisma.vanishingTicTacToeGame.update({
-      where: { id: GAME_ID },
+      where: { coupleId: requireCurrentCoupleId() },
       data: {
         status: "waiting",
         femaleReady,
@@ -248,7 +249,7 @@ export function placeTicTacToePiece(role: ChatRole, position: number) {
     const nextRole: ChatRole = role === "female" ? "male" : "female";
 
     return prisma.vanishingTicTacToeGame.update({
-      where: { id: GAME_ID },
+      where: { coupleId: requireCurrentCoupleId() },
       data: {
         status: winnerRole ? "finished" : "playing",
         currentTurn: winnerRole ? null : nextRole,

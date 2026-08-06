@@ -2,200 +2,219 @@
 
 [English](deployment.md)
 
-PairNest 默认通过 Docker Compose 启动 MySQL、数据库迁移任务和 API。以下流程适合
-单机自托管；公网环境还需要域名和 HTTPS 反向代理。
+本文介绍如何自托管一套可以容纳多对独立情侣空间的 PairNest API。仓库内的 Compose
+包含 MySQL、一次性 Prisma 迁移任务和 API。以下命令只作用于实际执行命令那台机器的
+Docker Engine，不会配置远程服务器、镜像仓库、域名、反向代理或自动 HTTPS。
 
 ## 1. 准备环境
 
 - Docker Engine
 - Docker Compose v2（用 `docker compose version` 检查）
-- 建议至少 1 GB 可用内存
-- 公网部署所需的域名、HTTPS 证书和反向代理
+- 小型实例建议至少 1 GB 可用内存
+- API 暴露到公网前自行准备 HTTPS 终止
 
-克隆仓库后进入项目根目录：
+## 2. 创建本机配置
+
+在仓库根目录执行：
 
 ```bash
 cp .env.example .env
 ```
 
-## 2. 配置环境变量
-
-`.env` 中必须填写四个互不相同的值：
-
-```dotenv
-PAIRNEST_DB_PASSWORD=
-PAIRNEST_DB_ROOT_PASSWORD=
-PAIRNEST_APP_SHARED_SECRET=
-PAIRNEST_AUTH_TOKEN_SECRET=
-```
-
-可以分别执行四次：
+填写所有必填空值，并分别生成三个独立随机值：
 
 ```bash
+openssl rand -hex 24
+openssl rand -hex 24
 openssl rand -hex 32
 ```
 
+前两个 URL 安全的十六进制值分别用于 `PAIRNEST_DB_PASSWORD` 和
+`PAIRNEST_DB_ROOT_PASSWORD`；最后一个用于 `PAIRNEST_AUTH_TOKEN_SECRET`，且
+长度不得少于 32 字符。
+
+不要把 `.env` 提交到 Git，也不要在不同部署之间复用数据库密码、JWT 密钥、签名密钥
+或业务数据。
+
 常用配置：
 
-| 变量 | 用途 |
-| --- | --- |
-| `PAIRNEST_DB_NAME`、`PAIRNEST_DB_USER` | MySQL 数据库名和用户 |
-| `PAIRNEST_DB_PASSWORD` | API 使用的 MySQL 用户密码 |
-| `PAIRNEST_DB_ROOT_PASSWORD` | MySQL root 密码 |
-| `PAIRNEST_APP_SHARED_SECRET` | 新设备激活时使用的共享密钥 |
-| `PAIRNEST_AUTH_TOKEN_SECRET` | 登录令牌签名密钥 |
-| `PAIRNEST_API_BIND` | 宿主机监听地址，默认 `127.0.0.1` |
-| `PAIRNEST_API_PORT` | 宿主机 API 端口，默认 `4000` |
-| `PAIRNEST_CORS_ORIGIN` | Web 客户端允许的来源，可用逗号分隔 |
-| `PAIRNEST_TRUST_PROXY` | 正确配置反向代理后设为 `true` |
-| `PAIRNEST_TIMEZONE` | 容器时区，例如 `Asia/Shanghai` |
+| 变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| `PAIRNEST_DB_NAME` / `PAIRNEST_DB_USER` | `pairnest` | MySQL 数据库和业务用户 |
+| `PAIRNEST_DB_PASSWORD` / `PAIRNEST_DB_ROOT_PASSWORD` | 必填 | 两个相互独立的 MySQL 密码 |
+| `PAIRNEST_AUTH_TOKEN_SECRET` | 必填 | 签发访问令牌，并用于认证失败记录的伪名化 |
+| `PAIRNEST_API_BIND` / `PAIRNEST_API_PORT` | `127.0.0.1` / `4000` | 宿主机监听地址和端口 |
+| `PAIRNEST_CORS_ORIGIN` | `*` | 浏览器来源，多个值用英文逗号分隔 |
+| `PAIRNEST_TRUST_PROXY` | `false` | 是否信任代理提供的客户端地址和协议 |
+| `PAIRNEST_TIMEZONE` | `UTC` | MySQL 和 API 容器时区 |
+| `PAIRNEST_REQUEST_TIMEOUT_MS` | `300000` | HTTP 请求超时，限制在 30 秒到 30 分钟之间 |
+| `PAIRNEST_STORAGE_QUOTA_BYTES` | `2147483648` | 每对情侣已登记上传文件额度（2 GiB） |
+| `PAIRNEST_MAX_VIDEO_UPLOAD_BYTES` | `104857600` | 单个视频上限（100 MiB） |
+| `PAIRNEST_AI_REQUEST_TIMEOUT_MS` | `120000` | AI 上游请求超时 |
+| `PAIRNEST_TRANSCRIPTION_REQUEST_TIMEOUT_MS` | `120000` | 语音转写上游请求超时 |
 
-AI 和语音转写配置都是可选的。对应 URL、Key 或模型名为空时，该功能不会启用。
-不要把 `.env` 提交到 Git。
+只有当访问 API 的所有路径都经过可信反向代理，且代理会覆盖转发 Header 时，才能启用
+`PAIRNEST_TRUST_PROXY`。PairNest 会使用解析出的客户端 IP 对匿名接口限流。
 
-## 3. 启动
+AI 和语音转写配置都是可选的；对应 URL、Key 或模型为空时，集成保持关闭。PairNest
+不支持服务端全局 AI 外部上下文目录。
+
+## 3. 检查并启动
 
 先检查 Compose 最终配置：
 
 ```bash
-docker compose config
+docker compose config --quiet
 ```
 
-启动服务：
+启动本机服务：
 
 ```bash
 docker compose up -d
 docker compose ps
 ```
 
-首次启动顺序如下：
+启动顺序如下：
 
-1. MySQL 启动并通过健康检查。
-2. `migrate` 容器执行 `prisma migrate deploy`。
-3. 数据库迁移成功后 API 启动。
+1. MySQL 启动并通过健康检查；
+2. `migrate` 对这套 MySQL 执行 `prisma migrate deploy`；
+3. 迁移成功后 API 启动并通过 `/health`。
 
-`migrate` 显示 `Exited (0)` 代表正常完成，不是故障。检查 API：
+`migrate` 显示 `Exited (0)` 代表正常完成。检查 API：
 
 ```bash
 curl http://127.0.0.1:4000/health
 curl http://127.0.0.1:4000/v1/ping
 ```
 
-查看日志：
+启动失败时查看日志：
 
 ```bash
 docker compose logs -f db migrate api
 ```
 
-## 4. 配置公网 HTTPS
+## 4. 通过 HTTPS 对外提供服务
 
-默认 `PAIRNEST_API_BIND=127.0.0.1`，适合让同一台服务器上的 Caddy、Nginx 或
-Traefik 反向代理到 `http://127.0.0.1:4000`。
+局域网开发时，可以设置 `PAIRNEST_API_BIND=0.0.0.0`，并在 App 中使用宿主机可信
+局域网地址，例如 `http://192.168.x.x:4000`。
 
-以 Nginx 为例：
+明文 HTTP 会把认证材料和关系数据暴露给网络观察者，禁止用于公网。公网部署应保持 API
+绑定 `127.0.0.1`，在前面配置自己的 HTTPS 反向代理，并为 `/ws` 转发 WebSocket。
+反向代理允许的请求体应略大于视频上限；默认 100 MiB 视频上限可使用 128 MiB，以
+容纳 multipart 开销。
+
+以下是 Nginx location 示例（省略证书与 DNS 配置）：
 
 ```nginx
-server {
-    listen 443 ssl http2;
-    server_name pairnest.example.com;
+client_max_body_size 128m;
 
-    client_max_body_size 64m;
-
-    location / {
-        proxy_pass http://127.0.0.1:4000;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
+location / {
+    proxy_pass http://127.0.0.1:4000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
 }
 ```
 
-同时在 `.env` 中设置：
+随后设置 `PAIRNEST_TRUST_PROXY=true`；如果使用浏览器客户端，还应限制
+`PAIRNEST_CORS_ORIGIN`。仓库不会附带 Caddy 或任何自动 TLS 配置。
 
-```dotenv
-PAIRNEST_TRUST_PROXY=true
-PAIRNEST_CORS_ORIGIN=https://你的前端域名
-```
+## 5. 创建和恢复情侣空间
 
-聊天实时连接使用 `/ws`，反向代理必须转发 WebSocket 的 `Upgrade` 和
-`Connection` 请求头。不要在公网使用明文 HTTP。
+用户首次进入时可以创建空间或输入邀请。创建空间会得到两个不同的秘密值：
 
-## 5. 连接 App
+- 一枚包含 26 个有效字符、分组显示的邀请密钥；24 小时后过期，目标成员加入后失效；
+- 一枚同等熵的长期恢复密钥；在认证成员主动轮换前持续有效。
 
-App 首次启动时填写后端根地址，例如：
+服务端只保存哈希。请把恢复密钥保存在密码管理器或同等级的安全位置。生成新邀请会使
+旧邀请失效；轮换恢复密钥会使旧恢复密钥失效。
+维护任务每六小时清除一次过期邀请哈希。创建后从未激活任何设备 Session 的开放空间会
+被视为已放弃，并在七天后删除。
 
-```text
-https://pairnest.example.com
-```
+服务端会把每台设备绑定到伴侣 A 或伴侣 B，并在有效 Session 的 JWT 中写入确认后的
+成员与情侣空间身份。退出登录会撤销 Session；恢复激活会替换并断开该位置原有的
+Session。
 
-不要填写 `/v1`，末尾有无 `/` 均可。App 会请求 `/v1/ping` 验证服务。
+## 6. 租户隔离、限制与删除
 
-局域网开发时可以把 `PAIRNEST_API_BIND` 改为 `0.0.0.0`，然后填写
-`http://局域网IP:4000`。只应在可信局域网中这样做，并确认防火墙没有把端口暴露到
-公网。
+所有业务表都按 `coupleId` 限定，并通过带级联删除的外键关联所属情侣空间。API 和
+WebSocket 操作只从已认证 Session 获取情侣空间和身份。
 
-## 6. 数据、备份与恢复
+主要固定窗口默认限制如下：
+
+| 维度 | 操作 | 默认值 |
+| --- | --- | --- |
+| IP | 创建情侣空间 | 每小时 5 次 |
+| IP | 校验邀请或激活设备 | 每 15 分钟 30 次 |
+| IP + 设备 | 激活连续失败 | 15 分钟内 5 次后锁定 60 分钟 |
+| 情侣空间 | 媒体上传 | 每小时 120 次 |
+| 情侣空间 | AI 请求 | 每小时 60 次且每天 300 次 |
+| 情侣空间 | 语音转写 | 每小时 20 次且每天 100 次 |
+| 情侣空间 | 邀请 / 轮换恢复密钥 | 每小时 10 次 / 5 次 |
+
+其他生成与删除接口也有情侣空间级限流。限流只能降低滥用风险，不能替代宿主机监控或
+第三方供应商的消费上限。
+
+尚未配对的空间收到请求后立即删除；已经配对的空间需要另一位成员确认，或者由原申请人
+等待七天后再次确认。删除会移除数据库记录和已登记媒体，并断开该空间的活动 WebSocket。
+独立备份和第三方供应商数据需要另行处理，详见[隐私说明](privacy.zh-CN.md)。
+
+## 7. 数据持久化与备份
 
 Compose 创建两个 named volume：
 
-- `pairnest_db-data`：MySQL 数据
-- `pairnest_uploads`：聊天和时间线等上传文件
+- `pairnest_db-data`：MySQL 数据；
+- `pairnest_uploads`：聊天、时间线和表情等媒体。
 
-`docker compose down` 不会删除 volume；`docker compose down -v` 会删除全部业务
-数据，使用前务必确认。
+实际前缀取决于 Compose 项目名。`docker compose down` 只删除容器和网络，会保留两个
+volume。
 
-备份时应同时保存数据库和上传目录。数据库示例：
+除非确实要销毁全部 PairNest 数据，否则不要执行 `docker compose down -v`。数据库
+与上传文件必须作为同一组数据一起备份和恢复。PairNest v0.1 不提供自动或加密备份。
 
-```bash
-docker compose exec -T db sh -c \
-  'exec mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE"' \
-  > pairnest.sql
-```
+## 8. 更新与迁移
 
-上传文件可以用临时容器从 volume 导出。恢复前停止 API，并确保数据库备份与上传文件
-来自同一个时间点。
-
-## 7. 可选语音转写
-
-启用语音转写会把原始音频发送给配置的第三方服务。启用前请阅读[隐私说明](privacy.md)。
-PairNest 支持传统 OpenAI 兼容的 `audio/transcriptions` 接口，以及 Qwen3-ASR-Flash
-兼容的 `chat/completions` 接口：
-
-```dotenv
-# 传统 multipart 上传
-PAIRNEST_TRANSCRIPTION_API_MODE=audio-transcriptions
-PAIRNEST_TRANSCRIPTION_API_URL=https://provider.example/v1/audio/transcriptions
-PAIRNEST_TRANSCRIPTION_API_KEY=replace-me
-PAIRNEST_TRANSCRIPTION_MODEL=whisper-1
-
-# 或 Qwen 兼容模式
-PAIRNEST_TRANSCRIPTION_API_MODE=qwen-chat-completions
-PAIRNEST_TRANSCRIPTION_API_URL=https://workspace.example/compatible-mode/v1
-PAIRNEST_TRANSCRIPTION_API_KEY=replace-me
-PAIRNEST_TRANSCRIPTION_MODEL=qwen3-asr-flash
-```
-
-Qwen 模式的 URL 可以填写 API base，也可以填写完整的 `/chat/completions` 地址。真实
-供应商域名、Workspace ID 和密钥只能放在未提交的 `.env` 中。
-
-## 8. 更新
-
-更新代码前先备份。随后在项目根目录执行：
+更新前先备份两个 volume。源码部署可执行：
 
 ```bash
-git pull
 docker compose build api migrate
 docker compose up -d
 docker compose ps
 ```
 
-`migrate` 会在新 API 启动前执行仓库中已提交的 Prisma migration。生产环境不要用
-`prisma db push` 替代 migration。
+一次性迁移任务会在新 API 启动前应用仓库中已提交的 Prisma migration。生产环境不要
+用 `prisma db push` 代替 `prisma migrate deploy`。升级旧的单情侣数据库前，请先阅读
+[迁移说明](migration.zh-CN.md)。
 
-## 9. 常见问题
+## 9. 可选 AI 与语音转写
+
+启用任一集成都会把数据发送给配置的第三方。供应商 URL、Workspace 标识和 Key 只能
+放在 `.env` 中，并应同时检查供应商的隐私和消费限制。
+
+AI 使用 OpenAI 兼容的 chat-completions 地址。语音支持 OpenAI 兼容的
+`audio/transcriptions` 和 Qwen 兼容的 `chat/completions`：
+
+```dotenv
+PAIRNEST_AI_API_URL=https://provider.example/v1
+PAIRNEST_AI_API_KEY=replace-me
+PAIRNEST_AI_MODEL=replace-me
+PAIRNEST_AI_REQUEST_TIMEOUT_MS=120000
+
+PAIRNEST_TRANSCRIPTION_API_MODE=audio-transcriptions
+PAIRNEST_TRANSCRIPTION_API_URL=https://provider.example/v1/audio/transcriptions
+PAIRNEST_TRANSCRIPTION_API_KEY=replace-me
+PAIRNEST_TRANSCRIPTION_MODEL=whisper-1
+PAIRNEST_TRANSCRIPTION_LANGUAGE=zh
+PAIRNEST_TRANSCRIPTION_REQUEST_TIMEOUT_MS=120000
+```
+
+使用 `qwen-chat-completions` 时，转写 URL 可以是 API base，也可以是完整的
+`/chat/completions` 地址。120 秒本地超时不代表供应商会停止处理已经收到的请求。
+
+## 10. 常见问题
 
 迁移失败：
 
@@ -204,8 +223,7 @@ docker compose logs migrate
 docker compose ps db
 ```
 
-检查数据库密码是否为空、是否包含不适合直接放进连接字符串的字符，以及
-`.env` 中数据库配置是否一致。
+确认数据库配置非空、适合直接写入 URL 且彼此一致。
 
 API 不健康：
 
@@ -215,5 +233,9 @@ docker compose exec api node -e \
   "fetch('http://127.0.0.1:4000/health').then(async r=>console.log(r.status,await r.text()))"
 ```
 
-手机无法连接时依次检查域名解析、HTTPS 证书、服务器防火墙、反向代理日志、
-`/v1/ping` 和 `/ws` 转发。
+手机无法连接时：
+
+- 确认 App 使用正确的运行时 PairNest 实例地址；
+- 确认 `PAIRNEST_API_BIND` 允许预期的网络接口；
+- 检查 DNS、宿主机防火墙、反向代理、`/v1/ping` 和 `/ws`；
+- 本机或可信开发局域网以外必须使用 HTTPS。

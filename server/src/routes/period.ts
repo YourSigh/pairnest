@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db';
 import { hasOverlap } from '../lib/period';
+import { requireCurrentCoupleId } from '../lib/tenant-context';
 
 const DEFAULT_SETTINGS = {
   cycleLength: 28,
@@ -38,11 +39,12 @@ type ParseDailyLogResult =
   | { dailyLog?: never; error: string };
 
 async function getSettings() {
-  const settings = await prisma.periodSettings.findUnique({ where: { id: 1 } });
+  const coupleId = requireCurrentCoupleId();
+  const settings = await prisma.periodSettings.findUnique({ where: { coupleId } });
   if (settings) return settings;
 
   return prisma.periodSettings.create({
-    data: { id: 1, ...DEFAULT_SETTINGS },
+    data: { coupleId, ...DEFAULT_SETTINGS },
   });
 }
 
@@ -208,6 +210,7 @@ periodRouter.get('/', async (_req, res) => {
 });
 
 periodRouter.put('/settings', async (req, res) => {
+  const coupleId = requireCurrentCoupleId();
   const cycleLength = Number(req.body?.cycleLength);
   const periodDuration = Number(req.body?.periodDuration);
 
@@ -217,8 +220,8 @@ periodRouter.put('/settings', async (req, res) => {
   }
 
   const settings = await prisma.periodSettings.upsert({
-    where: { id: 1 },
-    create: { id: 1, cycleLength, periodDuration },
+    where: { coupleId },
+    create: { coupleId, cycleLength, periodDuration },
     update: { cycleLength, periodDuration },
   });
 
@@ -232,6 +235,7 @@ periodRouter.put('/settings', async (req, res) => {
 });
 
 periodRouter.put('/logs/:date', async (req, res) => {
+  const coupleId = requireCurrentCoupleId();
   const parsed = parseIncomingDailyLog(req.body, req.params.date, req.params.date);
   if ('error' in parsed) {
     res.status(400).json({ ok: false, message: parsed.error });
@@ -240,8 +244,9 @@ periodRouter.put('/logs/:date', async (req, res) => {
 
   const { dailyLog } = parsed;
   const saved = await prisma.periodDailyLog.upsert({
-    where: { date: dailyLog.date },
+    where: { coupleId_date: { coupleId, date: dailyLog.date } },
     create: {
+      coupleId,
       date: dailyLog.date,
       flow: dailyLog.flow,
       pain: dailyLog.pain,
@@ -260,6 +265,7 @@ periodRouter.put('/logs/:date', async (req, res) => {
 });
 
 periodRouter.post('/sync', async (req, res) => {
+  const coupleId = requireCurrentCoupleId();
   const rawRecords = Array.isArray(req.body?.records)
     ? req.body.records.slice(0, MAX_SYNC_RECORDS)
     : [];
@@ -313,8 +319,8 @@ periodRouter.post('/sync', async (req, res) => {
   await prisma.$transaction(async (tx) => {
     if (settings) {
       await tx.periodSettings.upsert({
-        where: { id: 1 },
-        create: { id: 1, ...settings },
+        where: { coupleId },
+        create: { coupleId, ...settings },
         update: settings,
       });
     }
@@ -330,7 +336,7 @@ periodRouter.post('/sync', async (req, res) => {
 
       await tx.periodRecord.upsert({
         where: { id: record.id },
-        create: record,
+        create: { ...record, coupleId },
         update: {
           startDate: record.startDate,
           endDate: record.endDate ?? null,
@@ -340,8 +346,9 @@ periodRouter.post('/sync', async (req, res) => {
 
     for (const dailyLog of dailyLogs) {
       await tx.periodDailyLog.upsert({
-        where: { date: dailyLog.date },
+        where: { coupleId_date: { coupleId, date: dailyLog.date } },
         create: {
+          coupleId,
           date: dailyLog.date,
           flow: dailyLog.flow,
           pain: dailyLog.pain,
@@ -366,6 +373,7 @@ periodRouter.post('/sync', async (req, res) => {
 });
 
 periodRouter.post('/records', async (req, res) => {
+  const coupleId = requireCurrentCoupleId();
   const startDate = typeof req.body?.startDate === 'string' ? req.body.startDate.trim() : '';
   const endDate =
     typeof req.body?.endDate === 'string' && req.body.endDate.trim()
@@ -401,6 +409,7 @@ periodRouter.post('/records', async (req, res) => {
   const record = await prisma.periodRecord.create({
     data: {
       id: createPeriodRecordId(),
+      coupleId,
       startDate,
       endDate,
     },

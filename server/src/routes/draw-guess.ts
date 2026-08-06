@@ -13,7 +13,7 @@ import {
   unlockDrawGuessHint,
 } from "../lib/draw-guess";
 import { isDrawGuessCategory } from "../lib/draw-guess-words";
-import { getAuthenticatedRole } from "../middleware/auth";
+import { getAuthenticatedRole, getCoupleId } from "../middleware/auth";
 import { broadcastDrawGuessUpdate } from "../ws";
 
 export const drawGuessRouter = Router();
@@ -26,8 +26,8 @@ function sendGameError(res: Response, error: unknown) {
   throw error;
 }
 
-function notify(roundId: string, action: string) {
-  broadcastDrawGuessUpdate({
+function notify(res: Response, roundId: string, action: string) {
+  broadcastDrawGuessUpdate(getCoupleId(res), {
     roundId,
     action,
     occurredAt: new Date().toISOString(),
@@ -68,7 +68,7 @@ drawGuessRouter.post("/rounds", async (req, res) => {
   }
   try {
     const round = await prepareDrawGuessRound(role, category);
-    notify(round.id, "round-prepared");
+    notify(res, round.id, "round-prepared");
     res.status(201).json({ ok: true, round });
   } catch (error) {
     sendGameError(res, error);
@@ -84,7 +84,7 @@ drawGuessRouter.post("/rounds/:id/word", async (req, res) => {
   }
   try {
     const round = await chooseDrawGuessWord(req.params.id, role, wordId);
-    notify(round.id, "word-chosen");
+    notify(res, round.id, "word-chosen");
     res.json({ ok: true, round });
   } catch (error) {
     sendGameError(res, error);
@@ -105,7 +105,7 @@ drawGuessRouter.put("/rounds/:id/drawing", async (req, res) => {
       req.body.drawing,
       submit,
     );
-    if (submit) notify(round.id, "drawing-submitted");
+    if (submit) notify(res, round.id, "drawing-submitted");
     res.json({ ok: true, round });
   } catch (error) {
     sendGameError(res, error);
@@ -121,7 +121,7 @@ drawGuessRouter.post("/rounds/:id/guesses", async (req, res) => {
   }
   try {
     const round = await submitDrawGuessGuess(req.params.id, role, guess);
-    notify(round.id, round.status === "guessed" ? "round-finished" : "guess-added");
+    notify(res, round.id, round.status === "guessed" ? "round-finished" : "guess-added");
     res.json({ ok: true, round });
   } catch (error) {
     sendGameError(res, error);
@@ -136,7 +136,7 @@ drawGuessRouter.post("/rounds/:id/hint", async (req, res) => {
   }
   try {
     const round = await unlockDrawGuessHint(req.params.id, role);
-    notify(round.id, "hint-used");
+    notify(res, round.id, "hint-used");
     res.json({ ok: true, round });
   } catch (error) {
     sendGameError(res, error);
@@ -151,7 +151,7 @@ drawGuessRouter.post("/rounds/:id/give-up", async (req, res) => {
   }
   try {
     const round = await giveUpDrawGuessRound(req.params.id, role);
-    notify(round.id, "round-finished");
+    notify(res, round.id, "round-finished");
     res.json({ ok: true, round });
   } catch (error) {
     sendGameError(res, error);
@@ -166,7 +166,7 @@ drawGuessRouter.post("/rounds/:id/cancel", async (req, res) => {
   }
   try {
     const round = await cancelDrawGuessRound(req.params.id, role);
-    notify(round.id, "round-cancelled");
+    notify(res, round.id, "round-cancelled");
     res.json({ ok: true, round });
   } catch (error) {
     sendGameError(res, error);

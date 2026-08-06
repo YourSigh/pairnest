@@ -131,7 +131,7 @@ function WaitingCard({
       <View style={[styles.waitingHint, { backgroundColor: meta.soft }]}>
         <Ionicons name="heart-outline" size={14} color={meta.dark} />
         <Text style={[styles.waitingHintText, { color: meta.dark }]}>
-          已经同步，等宝宝操作
+          已经同步，等待伴侣操作
         </Text>
       </View>
     </View>

@@ -5,6 +5,8 @@ import {
   type LegacyRole,
   type PartnerRole,
 } from '../lib/auth';
+import { runWithCoupleId } from '../lib/tenant-context';
+export { getCoupleId } from '../lib/tenant';
 
 export function getAuthenticatedRole(res: Response): LegacyRole {
   const role = res.locals.auth?.role;
@@ -40,7 +42,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   try {
     const auth = await authenticateAccessToken(token);
     res.locals.auth = auth;
-    next();
+    runWithCoupleId(auth.claims.coupleId, next);
   } catch (error) {
     const code =
       error instanceof AccessTokenError ? error.code : 'INVALID_ACCESS_TOKEN';

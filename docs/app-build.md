@@ -46,10 +46,15 @@ Fork maintainers should set their own stable `expo.slug`,
 published bundle/package identifiers unless you intend to create a separate
 app.
 
-The backend URL is normally entered on first launch. An
-`EXPO_PUBLIC_PAIRNEST_DEFAULT_API_URL` may be supplied for development builds,
-but every `EXPO_PUBLIC_*` value is embedded in the client and must never contain
-a secret.
+The backend URL is selected at runtime. An operator can provide a public
+default with `EXPO_PUBLIC_PAIRNEST_DEFAULT_API_URL`, but every `EXPO_PUBLIC_*`
+value is embedded in the client and must never contain a secret. Production
+builds require an HTTPS PairNest URL; plain HTTP is accepted only by
+development builds for localhost or private-network testing.
+
+The instance URL is not an authentication secret. Users still create a couple
+space or join with the 26-character invitation shown by their partner. Never
+put an invitation or recovery key in an `EXPO_PUBLIC_*` variable.
 
 ## Android APK and Play Store AAB
 

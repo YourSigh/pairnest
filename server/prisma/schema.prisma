@@ -12,8 +12,105 @@ enum PartnerRole {
   partnerB
 }
 
+model Couple {
+  id                        String                         @id @db.VarChar(64)
+  pairingCodeHash           String?                        @unique @db.VarChar(64)
+  recoveryCodeHash          String?                        @unique @db.VarChar(64)
+  pairingCodeExpiresAt      DateTime?
+  pairingTargetRole         PartnerRole?
+  pairingPurpose            String?                        @db.VarChar(16)
+  status                    String                         @default("open") @db.VarChar(16)
+  deletionRequestedBy       PartnerRole?
+  deletionRequestedAt       DateTime?
+  createdAt                 DateTime                       @default(now())
+  updatedAt                 DateTime                       @updatedAt
+  countdownEvents           CountdownEvent[]
+  periodRecords             PeriodRecord[]
+  periodSettings            PeriodSettings?
+  periodDailyLogs           PeriodDailyLog[]
+  checkIns                  CoupleCheckIn[]
+  notificationCopies        RelationshipNotificationCopy[]
+  wishes                    WishItem[]
+  gachaEggs                 GachaEgg[]
+  gachaDraws                GachaDraw[]
+  gachaDailyStates          GachaDailyState[]
+  timelineNodes             TimelineNode[]
+  chatMessages              ChatMessage[]
+  chatMessageFavorites      ChatMessageFavorite[]
+  chatStickers              ChatSticker[]
+  chatReadStates            ChatReadState[]
+  aiChatMessages            AiChatMessage[]
+  aiMemories                AiMemory[]
+  memoryReports             MemoryReport[]
+  deviceSessions            DeviceSession[]
+  ticTacToeGame             VanishingTicTacToeGame?
+  drawGuessRounds           DrawGuessRound[]
+  drawGuessAttempts         DrawGuessAttempt[]
+  truthOrDareRounds         TruthOrDareRound[]
+  truthOrDareQuestions      TruthOrDareQuestion[]
+  pet                       CouplePet?
+  petActivities             PetActivity[]
+  petLetters                PetLetter[]
+  petOwnedItems             PetOwnedItem[]
+  petRoomPlacements         PetRoomPlacement[]
+  petFacilities             PetFacility[]
+  storageReservations       StorageReservation[]
+  webSocketConnectionLeases WebSocketConnectionLease[]
+}
+
+model ApiRateLimitBucket {
+  key             String    @id @db.VarChar(96)
+  count           Int       @default(0)
+  windowStartedAt DateTime
+  blockedUntil    DateTime?
+  updatedAt       DateTime  @updatedAt
+
+  @@index([updatedAt])
+}
+
+model StorageReservation {
+  id            String   @id @db.VarChar(64)
+  coupleId      String   @db.VarChar(64)
+  reservedBytes BigInt   @db.UnsignedBigInt
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  couple        Couple   @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+
+  @@index([coupleId, expiresAt])
+  @@index([expiresAt])
+}
+
+model MediaDeletionJob {
+  id        String   @id @db.VarChar(64)
+  coupleId  String   @db.VarChar(64)
+  filesJson Json
+  attempts  Int      @default(0)
+  lastError String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([updatedAt])
+}
+
+model WebSocketConnectionLease {
+  id        String        @id @db.VarChar(64)
+  sessionId String        @db.VarChar(64)
+  coupleId  String        @db.VarChar(64)
+  expiresAt DateTime
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  session   DeviceSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  couple    Couple        @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, expiresAt])
+  @@index([coupleId, expiresAt])
+  @@index([expiresAt])
+}
+
 model CountdownEvent {
   id                 String   @id
+  coupleId           String   @db.VarChar(64)
   ownerRole          String?  @db.VarChar(16)
   title              String   @db.VarChar(128)
   startDate          String   @db.VarChar(10)
@@ -31,40 +128,50 @@ model CountdownEvent {
   note               String?  @db.Text
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
+  couple             Couple   @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 
-  @@index([ownerRole, isFixed])
-  @@index([isPinned])
-  @@index([startDate])
+  @@index([coupleId, ownerRole, isFixed])
+  @@index([coupleId, isPinned])
+  @@index([coupleId, startDate])
 }
 
 model PeriodRecord {
   id        String   @id
+  coupleId  String   @db.VarChar(64)
   startDate String   @db.VarChar(10)
   endDate   String?  @db.VarChar(10)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  couple    Couple   @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 
-  @@index([startDate])
+  @@index([coupleId, startDate])
 }
 
 model PeriodSettings {
-  id             Int @id @default(1)
-  cycleLength    Int @default(28)
-  periodDuration Int @default(5)
+  coupleId       String @id @db.VarChar(64)
+  cycleLength    Int    @default(28)
+  periodDuration Int    @default(5)
+  couple         Couple @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 }
 
 model PeriodDailyLog {
-  date      String   @id @db.VarChar(10)
+  coupleId  String   @db.VarChar(64)
+  date      String   @db.VarChar(10)
   flow      String?  @db.VarChar(16)
   pain      Int?
   symptoms  String   @default("[]") @db.VarChar(1024)
   note      String?  @db.Text
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  couple    Couple   @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+
+  @@id([coupleId, date])
+  @@index([coupleId, updatedAt])
 }
 
 model CoupleCheckIn {
   id              String   @id @db.VarChar(80)
+  coupleId        String   @db.VarChar(64)
   date            String   @db.VarChar(10)
   role            String   @db.VarChar(16)
   mood            String   @db.VarChar(32)
@@ -72,25 +179,30 @@ model CoupleCheckIn {
   gachaReturnUsed Boolean  @default(false)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+  couple          Couple   @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 
-  @@unique([date, role])
-  @@index([date])
-  @@index([role])
+  @@unique([coupleId, date, role])
+  @@index([coupleId, date])
+  @@index([coupleId, role])
 }
 
 model RelationshipNotificationCopy {
-  targetRole String   @id @db.VarChar(16)
+  coupleId   String   @db.VarChar(64)
+  targetRole String   @db.VarChar(16)
   authorRole String   @db.VarChar(16)
   content    String   @db.VarChar(80)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  couple     Couple   @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 
-  @@index([authorRole])
-  @@index([updatedAt])
+  @@id([coupleId, targetRole])
+  @@index([coupleId, authorRole])
+  @@index([coupleId, updatedAt])
 }
 
 model WishItem {
   id          String    @id @db.VarChar(80)
+  coupleId    String    @db.VarChar(64)
   title       String    @db.VarChar(120)
   description String    @db.Text
   ownerRole   String    @db.VarChar(16)
@@ -103,81 +215,89 @@ model WishItem {
   fulfilledBy String?   @db.VarChar(16)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  couple      Couple    @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 
-  @@index([ownerRole])
-  @@index([status])
-  @@index([priority])
-  @@index([targetDate])
-  @@index([updatedAt])
+  @@index([coupleId, ownerRole])
+  @@index([coupleId, status])
+  @@index([coupleId, priority])
+  @@index([coupleId, targetDate])
+  @@index([coupleId, updatedAt])
 }
 
 model GachaEgg {
-  id           String      @id @db.VarChar(80)
-  eggType      String      @db.VarChar(16)
-  title        String      @db.VarChar(120)
-  description  String      @db.Text
-  creatorRole  String      @db.VarChar(16)
-  targetRole   String      @db.VarChar(16)
-  status       String      @default("queued") @db.VarChar(16)
-  expiresAt    DateTime?
-  drawnAt      DateTime?
-  respondedAt  DateTime?
-  completedAt  DateTime?
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-  draw         GachaDraw?
+  id          String     @id @db.VarChar(80)
+  coupleId    String     @db.VarChar(64)
+  eggType     String     @db.VarChar(16)
+  title       String     @db.VarChar(120)
+  description String     @db.Text
+  creatorRole String     @db.VarChar(16)
+  targetRole  String     @db.VarChar(16)
+  status      String     @default("queued") @db.VarChar(16)
+  expiresAt   DateTime?
+  drawnAt     DateTime?
+  respondedAt DateTime?
+  completedAt DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  draw        GachaDraw?
+  couple      Couple     @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 
-  @@index([targetRole, status, createdAt])
-  @@index([creatorRole, status, createdAt])
-  @@index([expiresAt])
+  @@index([coupleId, targetRole, status, createdAt])
+  @@index([coupleId, creatorRole, status, createdAt])
+  @@index([coupleId, expiresAt])
 }
 
 model GachaDraw {
-  id           String    @id @db.VarChar(80)
-  pool         String    @default("limited") @db.VarChar(16)
-  source       String    @db.VarChar(16)
-  eggType      String    @db.VarChar(16)
-  templateId   String?   @db.VarChar(80)
-  customEggId  String?   @unique @db.VarChar(80)
-  title        String    @db.VarChar(120)
-  description  String    @db.Text
-  starterTask  String    @db.Text
-  partnerTask  String    @db.Text
-  duration     String    @db.VarChar(32)
-  scene        String    @db.VarChar(32)
-  color        String    @db.VarChar(16)
-  softColor    String    @db.VarChar(16)
-  icon         String    @db.VarChar(64)
-  drawnBy      String    @db.VarChar(16)
-  creatorRole  String?   @db.VarChar(16)
-  targetRole   String?   @db.VarChar(16)
-  status       String    @default("drawn") @db.VarChar(16)
-  completedAt  DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  customEgg    GachaEgg? @relation(fields: [customEggId], references: [id])
+  id          String    @id @db.VarChar(80)
+  coupleId    String    @db.VarChar(64)
+  pool        String    @default("limited") @db.VarChar(16)
+  source      String    @db.VarChar(16)
+  eggType     String    @db.VarChar(16)
+  templateId  String?   @db.VarChar(80)
+  customEggId String?   @unique @db.VarChar(80)
+  title       String    @db.VarChar(120)
+  description String    @db.Text
+  starterTask String    @db.Text
+  partnerTask String    @db.Text
+  duration    String    @db.VarChar(32)
+  scene       String    @db.VarChar(32)
+  color       String    @db.VarChar(16)
+  softColor   String    @db.VarChar(16)
+  icon        String    @db.VarChar(64)
+  drawnBy     String    @db.VarChar(16)
+  creatorRole String?   @db.VarChar(16)
+  targetRole  String?   @db.VarChar(16)
+  status      String    @default("drawn") @db.VarChar(16)
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  customEgg   GachaEgg? @relation(fields: [customEggId], references: [id])
+  couple      Couple    @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 
-  @@index([drawnBy, createdAt])
-  @@index([drawnBy, pool, createdAt])
-  @@index([creatorRole, createdAt])
-  @@index([status, createdAt])
+  @@index([coupleId, drawnBy, createdAt])
+  @@index([coupleId, drawnBy, pool, createdAt])
+  @@index([coupleId, creatorRole, createdAt])
+  @@index([coupleId, status, createdAt])
 }
 
 model GachaDailyState {
   id         String   @id @db.VarChar(80)
+  coupleId   String   @db.VarChar(64)
   date       String   @db.VarChar(10)
   role       String   @db.VarChar(16)
   returnUsed Boolean  @default(false)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  couple     Couple   @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 
-  @@unique([date, role])
-  @@index([date])
-  @@index([role])
+  @@unique([coupleId, date, role])
+  @@index([coupleId, date])
+  @@index([coupleId, role])
 }
 
 model TimelineNode {
   id            String   @id @db.VarChar(80)
+  coupleId      String   @db.VarChar(64)
   title         String   @db.VarChar(120)
   description   String   @db.Text
   eventDate     String   @db.VarChar(10)
@@ -194,82 +314,88 @@ model TimelineNode {
   imageHeight   Int?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+  couple        Couple   @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 
-  @@index([eventDate])
-  @@index([createdBy])
-  @@index([isHighlight])
-  @@index([updatedAt])
+  @@index([coupleId, eventDate])
+  @@index([coupleId, createdBy])
+  @@index([coupleId, isHighlight])
+  @@index([coupleId, updatedAt])
 }
 
 model ChatMessage {
-  id                    String    @id
-  sender                String    @db.VarChar(16)
-  content               String    @db.Text
-  messageType           String    @default("text") @db.VarChar(16)
-  audioFileName         String?   @db.VarChar(255)
-  audioMimeType         String?   @db.VarChar(64)
+  id                    String                @id
+  coupleId              String                @db.VarChar(64)
+  sender                String                @db.VarChar(16)
+  content               String                @db.Text
+  messageType           String                @default("text") @db.VarChar(16)
+  audioFileName         String?               @db.VarChar(255)
+  audioMimeType         String?               @db.VarChar(64)
   audioSize             Int?
   audioDurationMs       Int?
-  imageFileName         String?   @db.VarChar(255)
-  imageMimeType         String?   @db.VarChar(64)
+  imageFileName         String?               @db.VarChar(255)
+  imageMimeType         String?               @db.VarChar(64)
   imageSize             Int?
   imageWidth            Int?
   imageHeight           Int?
-  imageThumbFileName    String?   @db.VarChar(255)
-  imageThumbMimeType    String?   @db.VarChar(64)
+  imageThumbFileName    String?               @db.VarChar(255)
+  imageThumbMimeType    String?               @db.VarChar(64)
   imageThumbSize        Int?
   imageThumbWidth       Int?
   imageThumbHeight      Int?
-  imageOriginalFileName String?   @db.VarChar(255)
-  imageOriginalMimeType String?   @db.VarChar(64)
+  imageOriginalFileName String?               @db.VarChar(255)
+  imageOriginalMimeType String?               @db.VarChar(64)
   imageOriginalSize     Int?
   imageOriginalWidth    Int?
   imageOriginalHeight   Int?
-  videoFileName         String?   @db.VarChar(255)
-  videoMimeType         String?   @db.VarChar(64)
+  videoFileName         String?               @db.VarChar(255)
+  videoMimeType         String?               @db.VarChar(64)
   videoSize             Int?
   videoDurationMs       Int?
   videoWidth            Int?
   videoHeight           Int?
-  videoThumbFileName    String?   @db.VarChar(255)
-  videoThumbMimeType    String?   @db.VarChar(64)
+  videoThumbFileName    String?               @db.VarChar(255)
+  videoThumbMimeType    String?               @db.VarChar(64)
   videoThumbSize        Int?
   videoThumbWidth       Int?
   videoThumbHeight      Int?
-  stickerId             String?   @db.VarChar(80)
-  stickerFileName       String?   @db.VarChar(255)
-  stickerMimeType       String?   @db.VarChar(64)
+  stickerId             String?               @db.VarChar(80)
+  stickerFileName       String?               @db.VarChar(255)
+  stickerMimeType       String?               @db.VarChar(64)
   stickerSize           Int?
   stickerWidth          Int?
   stickerHeight         Int?
-  transcript            String?   @db.Text
-  transcriptionStatus   String?   @db.VarChar(16)
+  transcript            String?               @db.Text
+  transcriptionStatus   String?               @db.VarChar(16)
   replyToMessageId      String?
   recalledAt            DateTime?
-  recalledBy            String?   @db.VarChar(16)
-  isFavorite            Boolean   @default(false)
-  createdAt             DateTime  @default(now())
+  recalledBy            String?               @db.VarChar(16)
+  isFavorite            Boolean               @default(false)
+  createdAt             DateTime              @default(now())
   favorites             ChatMessageFavorite[]
+  couple                Couple                @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 
-  @@index([createdAt])
-  @@index([recalledAt])
-  @@index([replyToMessageId])
-  @@index([isFavorite, createdAt])
-  @@index([stickerId])
+  @@index([coupleId, createdAt])
+  @@index([coupleId, recalledAt])
+  @@index([coupleId, replyToMessageId])
+  @@index([coupleId, isFavorite, createdAt])
+  @@index([coupleId, stickerId])
 }
 
 model ChatMessageFavorite {
+  coupleId  String      @db.VarChar(64)
   messageId String      @db.VarChar(191)
   ownerRole String      @db.VarChar(16)
   createdAt DateTime    @default(now())
   message   ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  couple    Couple      @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 
-  @@id([messageId, ownerRole])
-  @@index([ownerRole, createdAt])
+  @@id([coupleId, messageId, ownerRole])
+  @@index([coupleId, ownerRole, createdAt])
 }
 
 model ChatSticker {
   id        String   @id @db.VarChar(80)
+  coupleId  String   @db.VarChar(64)
   ownerRole String   @db.VarChar(16)
   fileName  String   @db.VarChar(255)
   mimeType  String   @db.VarChar(64)
@@ -281,43 +407,53 @@ model ChatSticker {
   isDeleted Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  couple    Couple   @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 
-  @@unique([ownerRole, fileHash])
-  @@index([ownerRole, isDeleted, sortOrder])
+  @@unique([coupleId, ownerRole, fileHash])
+  @@index([coupleId, ownerRole, isDeleted, sortOrder])
 }
 
 model ChatReadState {
-  role              String   @id @db.VarChar(16)
+  coupleId          String   @db.VarChar(64)
+  role              String   @db.VarChar(16)
   lastReadMessageId String   @db.VarChar(64)
   lastReadAt        DateTime
   updatedAt         DateTime @updatedAt
+  couple            Couple   @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+
+  @@id([coupleId, role])
 }
 
 model AiChatMessage {
   id               String   @id @db.VarChar(64)
+  coupleId         String   @db.VarChar(64)
   conversationRole String   @db.VarChar(16)
   messageRole      String   @db.VarChar(16)
   content          String   @db.Text
   sortOrder        BigInt   @default(0)
   createdAt        DateTime @default(now())
+  couple           Couple   @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 
-  @@index([conversationRole, createdAt])
-  @@index([conversationRole, sortOrder])
+  @@index([coupleId, conversationRole, createdAt])
+  @@index([coupleId, conversationRole, sortOrder])
 }
 
 model AiMemory {
   id          String   @id @db.VarChar(64)
+  coupleId    String   @db.VarChar(64)
   subjectRole String   @db.VarChar(16)
   sourceRole  String   @db.VarChar(16)
   content     String   @db.Text
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  couple      Couple   @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 
-  @@index([subjectRole, updatedAt])
+  @@index([coupleId, subjectRole, updatedAt])
 }
 
 model MemoryReport {
   id            String   @id @db.VarChar(96)
+  coupleId      String   @db.VarChar(64)
   reportType    String   @db.VarChar(16)
   periodKey     String   @db.VarChar(10)
   viewerRole    String   @db.VarChar(16)
@@ -328,10 +464,11 @@ model MemoryReport {
   generatedAt   DateTime @default(now())
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+  couple        Couple   @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 
-  @@unique([reportType, periodKey, viewerRole])
-  @@index([viewerRole, generatedAt])
-  @@index([reportType, periodKey])
+  @@unique([coupleId, reportType, periodKey, viewerRole])
+  @@index([coupleId, viewerRole, generatedAt])
+  @@index([coupleId, reportType, periodKey])
 }
 
 model AuthConfig {
@@ -359,49 +496,55 @@ model AuthActivationAttempt {
 }
 
 model DeviceSession {
-  id                        String    @id @db.VarChar(64)
-  deviceId                  String    @unique @db.VarChar(128)
+  id                        String                     @id @db.VarChar(64)
+  coupleId                  String                     @db.VarChar(64)
+  deviceId                  String                     @unique @db.VarChar(128)
   partnerRole               PartnerRole
-  deviceSecretHash          String    @db.VarChar(64)
-  refreshTokenHash          String    @unique @db.VarChar(64)
-  previousRefreshTokenHash  String?   @db.VarChar(64)
+  deviceSecretHash          String                     @db.VarChar(64)
+  refreshTokenHash          String                     @unique @db.VarChar(64)
+  previousRefreshTokenHash  String?                    @db.VarChar(64)
   previousRefreshValidUntil DateTime?
-  deviceName                String?   @db.VarChar(128)
-  platform                  String?   @db.VarChar(32)
-  osVersion                 String?   @db.VarChar(64)
-  appVersion                String?   @db.VarChar(32)
-  lastUsedAt                DateTime  @default(now())
+  deviceName                String?                    @db.VarChar(128)
+  platform                  String?                    @db.VarChar(32)
+  osVersion                 String?                    @db.VarChar(64)
+  appVersion                String?                    @db.VarChar(32)
+  lastUsedAt                DateTime                   @default(now())
   revokedAt                 DateTime?
-  createdAt                 DateTime  @default(now())
-  updatedAt                 DateTime  @updatedAt
+  createdAt                 DateTime                   @default(now())
+  updatedAt                 DateTime                   @updatedAt
+  couple                    Couple                     @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+  webSocketConnectionLeases WebSocketConnectionLease[]
 
+  @@index([coupleId, revokedAt])
   @@index([revokedAt])
   @@index([lastUsedAt])
-  @@index([partnerRole, revokedAt])
+  @@index([coupleId, partnerRole, revokedAt])
 }
 
 model VanishingTicTacToeGame {
-  id                Int      @id @default(1)
-  status            String   @default("waiting") @db.VarChar(16)
-  round             Int      @default(0)
-  femaleReady       Boolean  @default(false)
-  maleReady         Boolean  @default(false)
-  starterRole       String?  @db.VarChar(16)
-  currentTurn       String?  @db.VarChar(16)
-  winnerRole        String?  @db.VarChar(16)
-  boardJson         String   @default("[]") @db.VarChar(2048)
-  femaleQueueJson   String   @default("[]") @db.VarChar(128)
-  maleQueueJson     String   @default("[]") @db.VarChar(128)
-  winningLineJson   String   @default("[]") @db.VarChar(64)
-  moveNumber        Int      @default(0)
-  startedAt         DateTime?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  coupleId        String    @id @db.VarChar(64)
+  status          String    @default("waiting") @db.VarChar(16)
+  round           Int       @default(0)
+  femaleReady     Boolean   @default(false)
+  maleReady       Boolean   @default(false)
+  starterRole     String?   @db.VarChar(16)
+  currentTurn     String?   @db.VarChar(16)
+  winnerRole      String?   @db.VarChar(16)
+  boardJson       String    @default("[]") @db.VarChar(2048)
+  femaleQueueJson String    @default("[]") @db.VarChar(128)
+  maleQueueJson   String    @default("[]") @db.VarChar(128)
+  winningLineJson String    @default("[]") @db.VarChar(64)
+  moveNumber      Int       @default(0)
+  startedAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  couple          Couple    @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 }
 
 model DrawGuessRound {
   id              String             @id @db.VarChar(80)
-  roundNumber     Int                @unique
+  coupleId        String             @db.VarChar(64)
+  roundNumber     Int
   status          String             @default("choosing") @db.VarChar(16)
   drawerRole      String             @db.VarChar(16)
   guesserRole     String             @db.VarChar(16)
@@ -418,29 +561,34 @@ model DrawGuessRound {
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
   guesses         DrawGuessAttempt[]
+  couple          Couple             @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 
-  @@index([status, updatedAt])
-  @@index([drawerRole, createdAt])
-  @@index([guesserRole, createdAt])
-  @@index([completedAt])
+  @@unique([coupleId, roundNumber])
+  @@index([coupleId, status, updatedAt])
+  @@index([coupleId, drawerRole, createdAt])
+  @@index([coupleId, guesserRole, createdAt])
+  @@index([coupleId, completedAt])
 }
 
 model DrawGuessAttempt {
   id        String         @id @db.VarChar(80)
+  coupleId  String         @db.VarChar(64)
   roundId   String         @db.VarChar(80)
   role      String         @db.VarChar(16)
   content   String         @db.VarChar(64)
   isCorrect Boolean        @default(false)
   createdAt DateTime       @default(now())
   round     DrawGuessRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  couple    Couple         @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 
-  @@index([roundId, createdAt])
-  @@index([role, createdAt])
+  @@index([coupleId, roundId, createdAt])
+  @@index([coupleId, role, createdAt])
 }
 
 model TruthOrDareRound {
   id                 String                @id @db.VarChar(80)
-  roundNumber        Int                   @unique
+  coupleId           String                @db.VarChar(64)
+  roundNumber        Int
   status             String                @default("selecting") @db.VarChar(16)
   kind               String                @db.VarChar(16)
   performerRole      String                @db.VarChar(16)
@@ -451,69 +599,77 @@ model TruthOrDareRound {
   createdAt          DateTime              @default(now())
   updatedAt          DateTime              @updatedAt
   questions          TruthOrDareQuestion[]
+  couple             Couple                @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 
-  @@index([status, updatedAt])
-  @@index([performerRole, createdAt])
-  @@index([pickerRole, createdAt])
-  @@index([completedAt])
+  @@unique([coupleId, roundNumber])
+  @@index([coupleId, status, updatedAt])
+  @@index([coupleId, performerRole, createdAt])
+  @@index([coupleId, pickerRole, createdAt])
+  @@index([coupleId, completedAt])
 }
 
 model TruthOrDareQuestion {
-  id              String            @id @db.VarChar(80)
-  roundId         String            @db.VarChar(80)
-  batchNumber     Int               @default(1)
-  kind            String            @db.VarChar(16)
-  content         String            @db.VarChar(600)
-  normalizedKey   String            @unique @db.VarChar(191)
-  generatedByRole String            @db.VarChar(16)
-  targetRole      String            @db.VarChar(16)
+  id              String           @id @db.VarChar(80)
+  coupleId        String           @db.VarChar(64)
+  roundId         String           @db.VarChar(80)
+  batchNumber     Int              @default(1)
+  kind            String           @db.VarChar(16)
+  content         String           @db.VarChar(600)
+  normalizedKey   String           @db.VarChar(191)
+  generatedByRole String           @db.VarChar(16)
+  targetRole      String           @db.VarChar(16)
   selectedAt      DateTime?
   discardedAt     DateTime?
-  createdAt       DateTime          @default(now())
-  round           TruthOrDareRound  @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  createdAt       DateTime         @default(now())
+  round           TruthOrDareRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  couple          Couple           @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 
-  @@index([roundId, batchNumber, createdAt])
-  @@index([generatedByRole, kind, createdAt])
-  @@index([targetRole, kind, createdAt])
+  @@unique([coupleId, normalizedKey])
+  @@index([coupleId, roundId, batchNumber, createdAt])
+  @@index([coupleId, generatedByRole, kind, createdAt])
+  @@index([coupleId, targetRole, kind, createdAt])
 }
 
 model CouplePet {
-  id          Int      @id @default(1)
-  name        String   @default("团团") @db.VarChar(24)
-  species     String   @default("samoyed") @db.VarChar(24)
-  level       Int      @default(1)
-  experience  Int      @default(0)
-  hunger      Int      @default(82)
-  happiness   Int      @default(88)
-  cleanliness Int      @default(90)
-  energy      Int      @default(86)
-  affection   Int      @default(0)
-  coins       Int      @default(120)
-  careStreak  Int      @default(0)
-  lastCareDate String?  @db.VarChar(10)
-  lastDailyClaimDate String? @db.VarChar(10)
-  unlockedJson String  @default("[]") @db.VarChar(2048)
-  equippedAccessory String? @db.VarChar(32)
-  questClaimDate String? @db.VarChar(10)
-  questClaimsJson String @default("[]") @db.VarChar(512)
-  duoRewardDate String? @db.VarChar(10)
-  wishCompletedDate String? @db.VarChar(10)
-  lastMailRewardDate String? @db.VarChar(10)
-  postmanTrips Int @default(0)
+  id                    Int                @id @default(autoincrement())
+  coupleId              String             @unique @db.VarChar(64)
+  name                  String             @default("团团") @db.VarChar(24)
+  species               String             @default("samoyed") @db.VarChar(24)
+  level                 Int                @default(1)
+  experience            Int                @default(0)
+  hunger                Int                @default(82)
+  happiness             Int                @default(88)
+  cleanliness           Int                @default(90)
+  energy                Int                @default(86)
+  affection             Int                @default(0)
+  coins                 Int                @default(120)
+  careStreak            Int                @default(0)
+  lastCareDate          String?            @db.VarChar(10)
+  lastDailyClaimDate    String?            @db.VarChar(10)
+  unlockedJson          String             @default("[]") @db.VarChar(2048)
+  equippedAccessory     String?            @db.VarChar(32)
+  questClaimDate        String?            @db.VarChar(10)
+  questClaimsJson       String             @default("[]") @db.VarChar(512)
+  duoRewardDate         String?            @db.VarChar(10)
+  wishCompletedDate     String?            @db.VarChar(10)
+  lastMailRewardDate    String?            @db.VarChar(10)
+  postmanTrips          Int                @default(0)
   sleepInterruptedUntil DateTime?
-  adoptedAt   DateTime @default(now())
-  stateAt     DateTime @default(now())
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  activities  PetActivity[]
-  letters     PetLetter[]
-  ownedItems  PetOwnedItem[]
-  placements PetRoomPlacement[]
-  facilities PetFacility[]
+  adoptedAt             DateTime           @default(now())
+  stateAt               DateTime           @default(now())
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  activities            PetActivity[]
+  letters               PetLetter[]
+  ownedItems            PetOwnedItem[]
+  placements            PetRoomPlacement[]
+  facilities            PetFacility[]
+  couple                Couple             @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 }
 
 model PetActivity {
   id        String    @id @db.VarChar(80)
+  coupleId  String    @db.VarChar(64)
   petId     Int
   role      String    @db.VarChar(16)
   action    String    @db.VarChar(24)
@@ -522,13 +678,15 @@ model PetActivity {
   coinsUsed Int       @default(0)
   createdAt DateTime  @default(now())
   pet       CouplePet @relation(fields: [petId], references: [id], onDelete: Cascade)
+  couple    Couple    @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 
-  @@index([petId, createdAt])
-  @@index([role, createdAt])
+  @@index([coupleId, petId, createdAt])
+  @@index([coupleId, role, createdAt])
 }
 
 model PetLetter {
   id            String    @id @db.VarChar(80)
+  coupleId      String    @db.VarChar(64)
   petId         Int
   senderRole    String    @db.VarChar(16)
   recipientRole String    @db.VarChar(16)
@@ -544,27 +702,31 @@ model PetLetter {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   pet           CouplePet @relation(fields: [petId], references: [id], onDelete: Cascade)
+  couple        Couple    @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 
-  @@index([recipientRole, status, createdAt])
-  @@index([senderRole, createdAt])
-  @@index([petId, createdAt])
+  @@index([coupleId, recipientRole, status, createdAt])
+  @@index([coupleId, senderRole, createdAt])
+  @@index([coupleId, petId, createdAt])
 }
 
 model PetOwnedItem {
   id             String    @id @db.VarChar(80)
+  coupleId       String    @db.VarChar(64)
   petId          Int
   itemKey        String    @db.VarChar(48)
   source         String    @default("purchase") @db.VarChar(16)
   acquiredByRole String?   @db.VarChar(16)
   acquiredAt     DateTime  @default(now())
   pet            CouplePet @relation(fields: [petId], references: [id], onDelete: Cascade)
+  couple         Couple    @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 
-  @@unique([petId, itemKey])
-  @@index([petId, acquiredAt])
+  @@unique([coupleId, petId, itemKey])
+  @@index([coupleId, petId, acquiredAt])
 }
 
 model PetRoomPlacement {
   id            Int       @id @default(autoincrement())
+  coupleId      String    @db.VarChar(64)
   petId         Int
   scene         String    @default("room") @db.VarChar(16)
   slotKey       String    @db.VarChar(24)
@@ -572,19 +734,22 @@ model PetRoomPlacement {
   updatedByRole String    @db.VarChar(16)
   updatedAt     DateTime  @updatedAt
   pet           CouplePet @relation(fields: [petId], references: [id], onDelete: Cascade)
+  couple        Couple    @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 
-  @@unique([petId, scene, slotKey])
-  @@index([petId, updatedAt])
+  @@unique([coupleId, petId, scene, slotKey])
+  @@index([coupleId, petId, updatedAt])
 }
 
 model PetFacility {
   id            Int       @id @default(autoincrement())
+  coupleId      String    @db.VarChar(64)
   petId         Int
   facilityKey   String    @db.VarChar(16)
   level         Int       @default(1)
   updatedByRole String    @db.VarChar(16)
   updatedAt     DateTime  @updatedAt
   pet           CouplePet @relation(fields: [petId], references: [id], onDelete: Cascade)
+  couple        Couple    @relation(fields: [coupleId], references: [id], onDelete: Cascade)
 
-  @@unique([petId, facilityKey])
+  @@unique([coupleId, petId, facilityKey])
 }

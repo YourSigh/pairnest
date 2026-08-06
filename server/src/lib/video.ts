@@ -1,32 +1,39 @@
-import { randomUUID } from 'crypto';
-import { mkdir, open, stat, unlink } from 'fs/promises';
-import path from 'path';
-import multer from 'multer';
-import sharp from 'sharp';
+import { randomUUID } from "crypto";
+import { mkdir, open, stat, unlink } from "fs/promises";
+import path from "path";
+import multer from "multer";
+import sharp from "sharp";
 
-const MAX_VIDEO_SIZE = 200 * 1024 * 1024;
-const MAX_THUMBNAIL_SIZE = 5 * 1024 * 1024;
-const UPLOAD_DIR =
-  process.env.PAIRNEST_UPLOAD_DIR || path.resolve(process.cwd(), 'uploads');
-const CHAT_VIDEO_DIR = path.join(UPLOAD_DIR, 'chat-videos');
-const CHAT_VIDEO_THUMB_DIR = path.join(
-  UPLOAD_DIR,
-  'chat-video-thumbnails',
+const DEFAULT_MAX_VIDEO_SIZE = 100 * 1024 * 1024;
+const MAX_CONFIGURED_VIDEO_SIZE = 500 * 1024 * 1024;
+const configuredMaxVideoSize = Number(
+  process.env.PAIRNEST_MAX_VIDEO_UPLOAD_BYTES,
 );
+export const MAX_VIDEO_UPLOAD_BYTES = Number.isSafeInteger(configuredMaxVideoSize)
+  ? Math.min(
+      MAX_CONFIGURED_VIDEO_SIZE,
+      Math.max(1024 * 1024, configuredMaxVideoSize),
+    )
+  : DEFAULT_MAX_VIDEO_SIZE;
+export const MAX_VIDEO_THUMBNAIL_UPLOAD_BYTES = 5 * 1024 * 1024;
+const UPLOAD_DIR =
+  process.env.PAIRNEST_UPLOAD_DIR || path.resolve(process.cwd(), "uploads");
+const CHAT_VIDEO_DIR = path.join(UPLOAD_DIR, "chat-videos");
+const CHAT_VIDEO_THUMB_DIR = path.join(UPLOAD_DIR, "chat-video-thumbnails");
 
 const VIDEO_EXTENSIONS: Record<string, string> = {
-  'video/mp4': '.mp4',
-  'video/quicktime': '.mov',
-  'video/webm': '.webm',
-  'video/x-m4v': '.m4v',
-  'video/3gpp': '.3gp',
+  "video/mp4": ".mp4",
+  "video/quicktime": ".mov",
+  "video/webm": ".webm",
+  "video/x-m4v": ".m4v",
+  "video/3gpp": ".3gp",
 };
 
 const THUMBNAIL_EXTENSIONS: Record<string, string> = {
-  'image/jpeg': '.jpg',
-  'image/jpg': '.jpg',
-  'image/png': '.png',
-  'image/webp': '.webp',
+  "image/jpeg": ".jpg",
+  "image/jpg": ".jpg",
+  "image/png": ".png",
+  "image/webp": ".webp",
 };
 
 function safeExtension(
@@ -44,9 +51,7 @@ export const videoUpload = multer({
   storage: multer.diskStorage({
     destination: async (_req, file, callback) => {
       const directory =
-        file.fieldname === 'thumbnail'
-          ? CHAT_VIDEO_THUMB_DIR
-          : CHAT_VIDEO_DIR;
+        file.fieldname === "thumbnail" ? CHAT_VIDEO_THUMB_DIR : CHAT_VIDEO_DIR;
       try {
         await mkdir(directory, { recursive: true });
         callback(null, directory);
@@ -55,37 +60,37 @@ export const videoUpload = multer({
       }
     },
     filename: (_req, file, callback) => {
-      const isThumbnail = file.fieldname === 'thumbnail';
+      const isThumbnail = file.fieldname === "thumbnail";
       callback(
         null,
         `${randomUUID()}${safeExtension(
           file,
           isThumbnail ? THUMBNAIL_EXTENSIONS : VIDEO_EXTENSIONS,
-          isThumbnail ? '.jpg' : '.mp4',
+          isThumbnail ? ".jpg" : ".mp4",
         )}`,
       );
     },
   }),
   limits: {
-    fileSize: MAX_VIDEO_SIZE,
+    fileSize: MAX_VIDEO_UPLOAD_BYTES,
     files: 2,
   },
   fileFilter: (_req, file, callback) => {
     if (
-      file.fieldname === 'video' &&
+      file.fieldname === "video" &&
       VIDEO_EXTENSIONS[file.mimetype.toLowerCase()]
     ) {
       callback(null, true);
       return;
     }
     if (
-      file.fieldname === 'thumbnail' &&
+      file.fieldname === "thumbnail" &&
       THUMBNAIL_EXTENSIONS[file.mimetype.toLowerCase()]
     ) {
       callback(null, true);
       return;
     }
-    callback(new Error('只支持常见格式的视频和封面图片'));
+    callback(new Error("只支持常见格式的视频和封面图片"));
   },
 });
 
@@ -109,7 +114,7 @@ async function assertSupportedVideoContainer(
   filePath: string,
   mimeType: string,
 ) {
-  const handle = await open(filePath, 'r');
+  const handle = await open(filePath, "r");
   const header = Buffer.alloc(64);
   let bytesRead = 0;
   try {
@@ -119,15 +124,15 @@ async function assertSupportedVideoContainer(
   }
   const bytes = header.subarray(0, bytesRead);
   const valid =
-    mimeType === 'video/webm'
+    mimeType === "video/webm"
       ? bytes.length >= 4 &&
         bytes[0] === 0x1a &&
         bytes[1] === 0x45 &&
         bytes[2] === 0xdf &&
         bytes[3] === 0xa3
-      : bytes.indexOf(Buffer.from('ftyp')) >= 4;
+      : bytes.indexOf(Buffer.from("ftyp")) >= 4;
   if (!valid) {
-    throw new Error('视频文件格式无效或暂不支持');
+    throw new Error("视频文件格式无效或暂不支持");
   }
 }
 
@@ -146,7 +151,7 @@ export async function inspectVideoUpload(options: {
     durationMs < 250 ||
     durationMs > 10 * 60_000
   ) {
-    throw new Error('视频时长必须在 10 分钟以内');
+    throw new Error("视频时长必须在 10 分钟以内");
   }
   if (
     !Number.isFinite(width) ||
@@ -156,7 +161,7 @@ export async function inspectVideoUpload(options: {
     width > 7680 ||
     height > 7680
   ) {
-    throw new Error('视频尺寸无效');
+    throw new Error("视频尺寸无效");
   }
   const [videoStat, thumbnailStat, thumbnailMetadata] = await Promise.all([
     stat(options.video.path),
@@ -167,16 +172,18 @@ export async function inspectVideoUpload(options: {
       options.video.mimetype.toLowerCase(),
     ),
   ]);
-  if (videoStat.size <= 0 || videoStat.size > MAX_VIDEO_SIZE) {
-    throw new Error('视频文件不能超过 200MB');
+  if (videoStat.size <= 0 || videoStat.size > MAX_VIDEO_UPLOAD_BYTES) {
+    throw new Error(
+      `视频文件不能超过 ${Math.ceil(MAX_VIDEO_UPLOAD_BYTES / 1024 / 1024)}MB`,
+    );
   }
   if (
     thumbnailStat.size <= 0 ||
-    thumbnailStat.size > MAX_THUMBNAIL_SIZE ||
+    thumbnailStat.size > MAX_VIDEO_THUMBNAIL_UPLOAD_BYTES ||
     !thumbnailMetadata.width ||
     !thumbnailMetadata.height
   ) {
-    throw new Error('视频封面文件无效');
+    throw new Error("视频封面文件无效");
   }
   return {
     fileName: options.video.filename,
@@ -208,18 +215,18 @@ export async function cleanupVideoUpload(
 
 export function getVideoFilePath(fileName: string) {
   if (path.basename(fileName) !== fileName) {
-    throw new Error('视频文件名无效');
+    throw new Error("视频文件名无效");
   }
   return path.join(CHAT_VIDEO_DIR, fileName);
 }
 
 export function getVideoThumbnailFilePath(fileName: string) {
   if (path.basename(fileName) !== fileName) {
-    throw new Error('视频封面文件名无效');
+    throw new Error("视频封面文件名无效");
   }
   return path.join(CHAT_VIDEO_THUMB_DIR, fileName);
 }
 
 export function getVideoDownloadName(messageId: string, fileName: string) {
-  return `video-${messageId}${path.extname(fileName) || '.mp4'}`;
+  return `video-${messageId}${path.extname(fileName) || ".mp4"}`;
 }

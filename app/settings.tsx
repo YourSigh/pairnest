@@ -1,4 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
+import * as Clipboard from "expo-clipboard";
 import { Image } from "expo-image";
 import * as IntentLauncher from "expo-intent-launcher";
 import { useRouter } from "expo-router";
@@ -20,7 +21,6 @@ import { AppBackButton } from "@/components/app-back-button";
 import { AppAlert } from "@/components/app-dialog";
 import { ThemedText } from "@/components/themed-text";
 import { useToast } from "@/components/toast";
-import { CHAT_ROLE_LABELS } from "@/constants/chat";
 import {
   APP_NAVIGATION_ITEMS,
   type AppNavigationId,
@@ -42,6 +42,12 @@ import {
   getInstalledVersionInfo,
 } from "@/services/AppUpdateService";
 import { useAuth } from "@/services/AuthContext";
+import {
+  AuthApiError,
+  type CoupleDeletionCommand,
+  CoupleAuthStatus,
+  CoupleInvitation,
+} from "@/services/AuthService";
 import { BackgroundMessagingService } from "@/services/BackgroundMessagingService";
 import { BackgroundMessagingStorage } from "@/services/BackgroundMessagingStorage";
 import { ChatBackgroundStorage } from "@/services/ChatBackgroundStorage";
@@ -52,8 +58,6 @@ import {
   NotificationService,
 } from "@/services/NotificationService";
 import { NavigationLayoutStorage } from "@/services/NavigationLayoutStorage";
-import { useRole } from "@/services/RoleContext";
-import { SettingsUnlockStorage } from "@/services/SettingsUnlockStorage";
 import {
   TimelineThemeMode,
   TimelineThemeStorage,
@@ -104,6 +108,20 @@ const TIMELINE_THEME_OPTIONS: {
   },
 ];
 
+function formatAuthDate(value: string) {
+  return new Date(value).toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function partnerRoleLabel(role: "partnerA" | "partnerB") {
+  return role === "partnerA" ? "伴侣 A" : "伴侣 B";
+}
+
 type SettingsPanelProps = {
   active?: boolean;
   onClose?: () => void;
@@ -118,7 +136,6 @@ export function SettingsPanel({
   const router = useRouter();
   const toast = useToast();
   const auth = useAuth();
-  const { role } = useRole();
   const [backgroundUri, setBackgroundUri] = useState<string | null>(null);
   const [readReceiptDisplayEnabled, setReadReceiptDisplayEnabled] =
     useState(false);
@@ -127,8 +144,6 @@ export function SettingsPanel({
   const [voiceDownloadDisplayEnabled, setVoiceDownloadDisplayEnabled] =
     useState(false);
   const [appThemeId, setAppThemeId] = useState<AppThemeId>("blossom");
-  const [archiveStashEnabled, setArchiveStashEnabled] = useState(false);
-  const [archivePreviewEnabled, setArchivePreviewEnabled] = useState(false);
   const [backgroundMessagingEnabled, setBackgroundMessagingEnabled] =
     useState(true);
   const [backgroundMessagingRunning, setBackgroundMessagingRunning] =
@@ -145,6 +160,18 @@ export function SettingsPanel({
   const [layoutEditorExpanded, setLayoutEditorExpanded] = useState(false);
   const [backgroundLoading, setBackgroundLoading] = useState(false);
   const [updateChecking, setUpdateChecking] = useState(false);
+  const [coupleStatus, setCoupleStatus] =
+    useState<CoupleAuthStatus | null>(null);
+  const [invitation, setInvitation] = useState<CoupleInvitation | null>(null);
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [storedRecoveryCode, setStoredRecoveryCode] = useState<string | null>(
+    null,
+  );
+  const [recoveryCodeVisible, setRecoveryCodeVisible] = useState(false);
+  const [recoveryCodeLoading, setRecoveryCodeLoading] = useState(false);
+  const [recoveryCodeSaveWarning, setRecoveryCodeSaveWarning] = useState(false);
+  const [deletionLoading, setDeletionLoading] = useState(false);
+  const [serverChangeLoading, setServerChangeLoading] = useState(false);
   const installedVersion = getInstalledVersionInfo();
 
   const handleClose = useCallback(() => {
@@ -159,12 +186,6 @@ export function SettingsPanel({
     if (!active) return;
 
     void ChatBackgroundStorage.getBackgroundUri().then(setBackgroundUri);
-    void SettingsUnlockStorage.isArchiveStashEnabled().then(
-      setArchiveStashEnabled,
-    );
-    void SettingsUnlockStorage.isArchivePreviewEnabled().then(
-      setArchivePreviewEnabled,
-    );
     void AppThemeStorage.load().then(setAppThemeId);
     void ChatReadReceiptDisplayStorage.isEnabled().then(
       setReadReceiptDisplayEnabled,
@@ -202,6 +223,30 @@ export function SettingsPanel({
       unsubscribeBottomNavigation();
     };
   }, [active]);
+
+  useEffect(() => {
+    if (!active || auth.status !== "authenticated") return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const status = await auth.getCoupleStatus();
+        const recoveryCode = await auth.getStoredRecoveryCode(status.coupleId);
+        if (!cancelled) {
+          setCoupleStatus(status);
+          setStoredRecoveryCode(recoveryCode);
+          setRecoveryCodeSaveWarning(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setCoupleStatus(null);
+          setStoredRecoveryCode(null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [active, auth]);
 
   const saveBottomNavigation = async (nextIds: AppNavigationId[]) => {
     const previousIds = bottomNavigationIds;
@@ -314,38 +359,6 @@ export function SettingsPanel({
       });
     } catch {
       toast.show({ message: "主题保存失败，请重试", icon: "alert-circle" });
-    }
-  };
-
-  const handleToggleArchivePreview = async () => {
-    const next = !archivePreviewEnabled;
-    try {
-      await SettingsUnlockStorage.setArchivePreviewEnabled(next);
-      setArchivePreviewEnabled(next);
-      toast.show({
-        message: next
-          ? "扭蛋页将播放本机典藏预览"
-          : "已关闭典藏预览模式",
-        icon: "checkmark-circle",
-      });
-    } catch {
-      toast.show({ message: "设置失败，请重试", icon: "alert-circle" });
-    }
-  };
-
-  const handleToggleArchiveStash = async () => {
-    const next = !archiveStashEnabled;
-    try {
-      await SettingsUnlockStorage.setArchiveStashEnabled(next);
-      setArchiveStashEnabled(next);
-      toast.show({
-        message: next
-          ? "塞扭蛋时将显示典藏入口"
-          : "已隐藏塞典藏扭蛋入口",
-        icon: "checkmark-circle",
-      });
-    } catch {
-      toast.show({ message: "设置失败，请重试", icon: "alert-circle" });
     }
   };
 
@@ -479,7 +492,272 @@ export function SettingsPanel({
     }
   };
 
+  const refreshCoupleStatus = async () => {
+    const status = await auth.getCoupleStatus();
+    setCoupleStatus(status);
+    return status;
+  };
+
+  const handleCreateInvitation = async () => {
+    if (inviteLoading) return;
+    try {
+      setInviteLoading(true);
+      const nextInvitation = await auth.createCoupleInvitation();
+      setInvitation(nextInvitation);
+      toast.show({
+        message:
+          nextInvitation.purpose === "recovery"
+            ? "恢复邀请已生成，24 小时内有效"
+            : "加入邀请已生成，24 小时内有效",
+        icon: "checkmark-circle",
+      });
+    } catch (error) {
+      toast.show({
+        message: error instanceof Error ? error.message : "生成邀请失败",
+        icon: "alert-circle",
+      });
+    } finally {
+      setInviteLoading(false);
+    }
+  };
+
+  const handleCopyInvitation = async () => {
+    if (!invitation) return;
+    try {
+      await Clipboard.setStringAsync(invitation.pairingCode);
+      toast.show({ message: "邀请密钥已复制", icon: "checkmark-circle" });
+    } catch {
+      toast.show({ message: "复制失败，请重试", icon: "alert-circle" });
+    }
+  };
+
+  const handleCopyRecoveryCode = async () => {
+    if (!storedRecoveryCode) return;
+    try {
+      await Clipboard.setStringAsync(storedRecoveryCode);
+      toast.show({ message: "恢复密钥已复制", icon: "checkmark-circle" });
+    } catch {
+      toast.show({ message: "复制失败，请重试", icon: "alert-circle" });
+    }
+  };
+
+  const handleRotateRecoveryCode = () => {
+    if (recoveryCodeLoading || serverChangeLoading) return;
+    AppAlert.alert(
+      "旋转永久恢复密钥",
+      "旋转后旧恢复密钥会立即失效。新密钥只保存在当前设备，请复制并放到安全的位置。",
+      [
+        { text: "取消", style: "cancel" },
+        {
+          text: "旋转密钥",
+          style: "destructive",
+          onPress: () => {
+            void (async () => {
+              try {
+                setRecoveryCodeLoading(true);
+                const result = await auth.rotateRecoveryCode();
+                setStoredRecoveryCode(result.recoveryCode);
+                setRecoveryCodeVisible(true);
+                setRecoveryCodeSaveWarning(!result.savedLocally);
+                toast.show({
+                  message: result.savedLocally
+                    ? "恢复密钥已旋转，旧密钥已失效"
+                    : "密钥已旋转，但未能保存到本机；请立即复制",
+                  icon: result.savedLocally
+                    ? "checkmark-circle"
+                    : "alert-circle",
+                });
+              } catch (error) {
+                toast.show({
+                  message:
+                    error instanceof Error ? error.message : "旋转恢复密钥失败",
+                  icon: "alert-circle",
+                });
+              } finally {
+                setRecoveryCodeLoading(false);
+              }
+            })();
+          },
+        },
+      ],
+    );
+  };
+
+  const submitCoupleDeletion = async (command: CoupleDeletionCommand) => {
+    if (deletionLoading) return;
+    try {
+      setDeletionLoading(true);
+      const result = await auth.requestCoupleDeletion(command);
+      if (result.deleted) {
+        toast.show({
+          message: result.mediaCleanupPending
+            ? "情侣空间已删除，媒体文件正在后台继续清理"
+            : "情侣空间已永久删除",
+          icon: "checkmark-circle",
+        });
+        return;
+      }
+      setCoupleStatus((current) =>
+        current
+          ? {
+              ...current,
+              deletionRequestedBy: auth.partnerRole ?? null,
+              deletionRequestedAt: result.requestedAt,
+              deletionCanCompleteAt: result.canCompleteAt,
+            }
+          : current,
+      );
+      toast.show({ message: result.message, icon: "checkmark-circle" });
+    } catch (error) {
+      if (
+        error instanceof AuthApiError &&
+        (error.code === "DELETION_STATE_CHANGED" ||
+          error.code === "DELETION_WAIT_NOT_ELAPSED")
+      ) {
+        await refreshCoupleStatus().catch(() => undefined);
+      }
+      toast.show({
+        message:
+          error instanceof Error ? error.message : "提交删除申请失败",
+        icon: "alert-circle",
+      });
+    } finally {
+      setDeletionLoading(false);
+    }
+  };
+
+  const handleDeleteCouple = () => {
+    if (deletionLoading) return;
+    if (!coupleStatus) {
+      toast.show({
+        message: "暂时无法读取情侣空间状态，请稍后重试",
+        icon: "alert-circle",
+      });
+      return;
+    }
+    const requestedByMe =
+      Boolean(coupleStatus?.deletionRequestedBy) &&
+      coupleStatus?.deletionRequestedBy === auth.partnerRole;
+    const canCompleteAt = coupleStatus?.deletionCanCompleteAt
+      ? new Date(coupleStatus.deletionCanCompleteAt)
+      : null;
+    const waitElapsed = Boolean(
+      requestedByMe && canCompleteAt && canCompleteAt.getTime() <= Date.now(),
+    );
+
+    if (requestedByMe && !waitElapsed) {
+      AppAlert.alert(
+        "删除申请等待确认",
+        `申请正在等待另一位伴侣确认。若对方不确认，你可以在 ${
+          canCompleteAt ? formatAuthDate(canCompleteAt.toISOString()) : "七天后"
+        } 再次永久删除；也可以现在取消申请。`,
+        [{ text: "知道了" }],
+      );
+      return;
+    }
+
+    const partnerRequested =
+      Boolean(coupleStatus?.deletionRequestedBy) && !requestedByMe;
+    const explanation = partnerRequested
+      ? "另一位伴侣已提交删除申请。你确认后，情侣空间、聊天、图片和其他数据会立即永久删除。"
+      : waitElapsed
+        ? "七天等待期已经结束。继续后，情侣空间和其中所有数据会立即永久删除。"
+        : "如果另一位尚未加入，确认后会立即删除；若已经完成配对，则会等待另一位确认，或由你在七天后再次确认删除。";
+    const command: CoupleDeletionCommand =
+      partnerRequested || waitElapsed
+        ? {
+            action: "confirm",
+            expectedRequestedBy: coupleStatus.deletionRequestedBy!,
+            expectedRequestedAt: coupleStatus.deletionRequestedAt!,
+          }
+        : { action: "request" };
+
+    AppAlert.alert("删除情侣空间", explanation, [
+      { text: "取消", style: "cancel" },
+      {
+        text: "继续",
+        style: "destructive",
+        onPress: () => {
+          AppAlert.alert(
+            partnerRequested || waitElapsed ? "最后确认永久删除" : "确认提交删除申请",
+            partnerRequested || waitElapsed
+              ? "此操作不可恢复。删除后，两位伴侣都将无法再访问这个空间。"
+              : "若空间尚未完成配对会立即永久删除；否则会记录删除申请，并可在真正删除前由你取消。",
+            [
+              { text: "返回", style: "cancel" },
+              {
+                text: partnerRequested || waitElapsed ? "永久删除" : "确认继续",
+                style: "destructive",
+                onPress: () => void submitCoupleDeletion(command),
+              },
+            ],
+          );
+        },
+      },
+    ]);
+  };
+
+  const handleCancelCoupleDeletion = () => {
+    if (deletionLoading) return;
+    AppAlert.alert(
+      "取消删除申请",
+      "取消后情侣空间会继续保留。之后仍可重新提交删除申请。",
+      [
+        { text: "返回", style: "cancel" },
+        {
+          text: "取消申请",
+          onPress: () => {
+            void (async () => {
+              try {
+                setDeletionLoading(true);
+                const result = await auth.cancelCoupleDeletion();
+                if (!result.cancelled) {
+                  await refreshCoupleStatus();
+                  toast.show({
+                    message: "删除申请已变化，请查看最新状态",
+                    icon: "alert-circle",
+                  });
+                  return;
+                }
+                setCoupleStatus((current) =>
+                  current
+                    ? {
+                        ...current,
+                        deletionRequestedBy: null,
+                        deletionRequestedAt: null,
+                        deletionCanCompleteAt: null,
+                      }
+                    : current,
+                );
+                toast.show({
+                  message: "删除申请已取消",
+                  icon: "checkmark-circle",
+                });
+              } catch (error) {
+                toast.show({
+                  message:
+                    error instanceof Error ? error.message : "取消申请失败",
+                  icon: "alert-circle",
+                });
+              } finally {
+                setDeletionLoading(false);
+              }
+            })();
+          },
+        },
+      ],
+    );
+  };
+
   const handleChangeServer = () => {
+    if (
+      serverChangeLoading ||
+      recoveryCodeLoading ||
+      inviteLoading ||
+      deletionLoading
+    ) {
+      return;
+    }
     AppAlert.alert(
       "更换 PairNest 服务器",
       "这会退出当前设备登录，但不会删除服务器中的任何数据。",
@@ -488,7 +766,22 @@ export function SettingsPanel({
         {
           text: "退出并更换",
           style: "destructive",
-          onPress: () => void auth.clearServer(),
+          onPress: () => {
+            void (async () => {
+              try {
+                setServerChangeLoading(true);
+                await auth.clearServer();
+              } catch (error) {
+                toast.show({
+                  message:
+                    error instanceof Error ? error.message : "更换服务器失败",
+                  icon: "alert-circle",
+                });
+              } finally {
+                setServerChangeLoading(false);
+              }
+            })();
+          },
         },
       ],
     );
@@ -516,7 +809,7 @@ export function SettingsPanel({
           <>
             <ThemedText style={styles.sectionTitle}>消息通知</ThemedText>
             <ThemedText style={styles.sectionHint}>
-              宝宝～检查一下这里的设置有没有开哦～
+              请检查以下通知与后台运行设置
             </ThemedText>
             <View style={styles.card}>
               <TouchableOpacity
@@ -1107,6 +1400,208 @@ export function SettingsPanel({
         </View>
 
         <ThemedText style={[styles.sectionTitle, styles.sectionSpacing]}>
+          情侣空间
+        </ThemedText>
+        <ThemedText style={styles.sectionHint}>
+          邀请另一位伴侣加入，或在换机时恢复原有身份。
+        </ThemedText>
+        <View style={styles.card}>
+          <TouchableOpacity
+            style={[styles.actionRow, styles.optionRowBorder]}
+            onPress={() => void handleCreateInvitation()}
+            disabled={inviteLoading || deletionLoading}
+            activeOpacity={0.7}
+          >
+            <View style={styles.settingTextWrap}>
+              <ThemedText style={styles.optionLabel}>
+                {coupleStatus?.partnerActive ? "生成恢复邀请" : "生成加入邀请"}
+              </ThemedText>
+              <ThemedText style={styles.settingStatus}>
+                新邀请会使之前尚未使用的邀请失效，有效期 24 小时
+              </ThemedText>
+            </View>
+            {inviteLoading ? (
+              <ActivityIndicator size="small" color={AppColors.primary} />
+            ) : (
+              <Ionicons name="person-add-outline" size={20} color={AppColors.primary} />
+            )}
+          </TouchableOpacity>
+
+          {invitation ? (
+            <View style={[styles.invitationBlock, styles.optionRowBorder]}>
+              <ThemedText style={styles.invitationTitle}>
+                {invitation.purpose === "recovery" ? "恢复邀请" : "加入邀请"}
+                {` · ${partnerRoleLabel(invitation.targetRole)}`}
+              </ThemedText>
+              <ThemedText selectable style={styles.invitationCode}>
+                {invitation.pairingCode}
+              </ThemedText>
+              <ThemedText style={styles.settingStatus}>
+                24 小时内有效 · {formatAuthDate(invitation.expiresAt)} 到期
+                {invitation.purpose === "recovery"
+                  ? "；使用后该身份的旧设备会退出"
+                  : ""}
+              </ThemedText>
+              <TouchableOpacity
+                style={styles.invitationCopyButton}
+                onPress={() => void handleCopyInvitation()}
+                activeOpacity={0.75}
+              >
+                <Ionicons name="copy-outline" size={16} color={AppColors.primary} />
+                <ThemedText style={styles.invitationCopyText}>复制邀请密钥</ThemedText>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
+          <TouchableOpacity
+            style={[styles.actionRow, styles.optionRowBorder]}
+            onPress={
+              storedRecoveryCode
+                ? () => setRecoveryCodeVisible((visible) => !visible)
+                : handleRotateRecoveryCode
+            }
+            disabled={
+              recoveryCodeLoading || deletionLoading || serverChangeLoading
+            }
+            activeOpacity={0.7}
+          >
+            <View style={styles.settingTextWrap}>
+              <ThemedText style={styles.optionLabel}>永久恢复密钥</ThemedText>
+              <ThemedText style={styles.settingStatus}>
+                {storedRecoveryCode
+                  ? "已按当前服务器隔离保存在本机；退出或换服不会删除"
+                  : "当前设备没有保存此空间的恢复密钥，可旋转生成新密钥"}
+              </ThemedText>
+            </View>
+            {recoveryCodeLoading ? (
+              <ActivityIndicator size="small" color={AppColors.primary} />
+            ) : (
+              <Ionicons
+                name={
+                  storedRecoveryCode
+                    ? recoveryCodeVisible
+                      ? "eye-off-outline"
+                      : "eye-outline"
+                    : "key-outline"
+                }
+                size={20}
+                color={AppColors.primary}
+              />
+            )}
+          </TouchableOpacity>
+
+          {storedRecoveryCode && recoveryCodeVisible ? (
+            <View style={[styles.invitationBlock, styles.optionRowBorder]}>
+              <ThemedText style={styles.recoveryWarning}>
+                {recoveryCodeSaveWarning
+                  ? "密钥已经在服务器生效，但未能保存到本机。请立即复制到可信的密码管理器，关闭此页面后可能无法找回。"
+                  : "请像保管密码一样保管。任何拿到此密钥的人都可以尝试恢复你们的身份。"}
+              </ThemedText>
+              <ThemedText selectable style={styles.invitationCode}>
+                {storedRecoveryCode}
+              </ThemedText>
+              <TouchableOpacity
+                style={styles.invitationCopyButton}
+                onPress={() => void handleCopyRecoveryCode()}
+                activeOpacity={0.75}
+              >
+                <Ionicons name="copy-outline" size={16} color={AppColors.primary} />
+                <ThemedText style={styles.invitationCopyText}>复制恢复密钥</ThemedText>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
+          <TouchableOpacity
+            style={[styles.actionRow, styles.optionRowBorder]}
+            onPress={handleRotateRecoveryCode}
+            disabled={
+              recoveryCodeLoading || deletionLoading || serverChangeLoading
+            }
+            activeOpacity={0.7}
+          >
+            <View style={styles.settingTextWrap}>
+              <ThemedText style={styles.optionLabel}>旋转恢复密钥</ThemedText>
+              <ThemedText style={styles.settingStatus}>
+                生成新密钥并立即使旧密钥失效
+              </ThemedText>
+            </View>
+            <Ionicons name="refresh-outline" size={20} color={AppColors.primary} />
+          </TouchableOpacity>
+
+          {coupleStatus?.deletionRequestedAt ? (
+            <View style={[styles.deletionStatusBlock, styles.optionRowBorder]}>
+              <Ionicons name="time-outline" size={19} color="#B7791F" />
+              <View style={styles.settingTextWrap}>
+                <ThemedText style={styles.deletionStatusTitle}>
+                  {coupleStatus.deletionRequestedBy === auth.partnerRole
+                    ? "你的删除申请正在等待确认"
+                    : `${partnerRoleLabel(
+                        coupleStatus.deletionRequestedBy ?? "partnerA",
+                      )} 请求删除情侣空间`}
+                </ThemedText>
+                <ThemedText style={styles.settingStatus}>
+                  {coupleStatus.deletionRequestedBy === auth.partnerRole
+                    ? `另一位伴侣确认后立即删除；若未确认，可在 ${
+                        coupleStatus.deletionCanCompleteAt
+                          ? formatAuthDate(coupleStatus.deletionCanCompleteAt)
+                          : "七天后"
+                      } 再次确认`
+                    : "你确认后将立即永久删除，也可以暂不处理"}
+                </ThemedText>
+              </View>
+            </View>
+          ) : null}
+
+          <TouchableOpacity
+            style={[
+              styles.actionRow,
+              coupleStatus?.deletionRequestedBy === auth.partnerRole &&
+                styles.optionRowBorder,
+            ]}
+            onPress={handleDeleteCouple}
+            disabled={
+              deletionLoading ||
+              inviteLoading ||
+              serverChangeLoading ||
+              !coupleStatus
+            }
+            activeOpacity={0.7}
+          >
+            <View style={styles.settingTextWrap}>
+              <ThemedText style={styles.dangerLabel}>
+                {coupleStatus?.deletionRequestedBy === auth.partnerRole
+                  ? "查看删除申请"
+                  : "删除情侣空间"}
+              </ThemedText>
+              <ThemedText style={styles.settingStatus}>
+                删除前需要二次确认；此操作最终完成后不可恢复
+              </ThemedText>
+            </View>
+            {deletionLoading ? (
+              <ActivityIndicator size="small" color={AppColors.danger} />
+            ) : (
+              <Ionicons name="trash-outline" size={20} color={AppColors.danger} />
+            )}
+          </TouchableOpacity>
+
+          {coupleStatus?.deletionRequestedBy === auth.partnerRole ? (
+            <TouchableOpacity
+              style={styles.actionRow}
+              onPress={handleCancelCoupleDeletion}
+              disabled={deletionLoading}
+              activeOpacity={0.7}
+            >
+              <View style={styles.settingTextWrap}>
+                <ThemedText style={styles.optionLabel}>取消删除申请</ThemedText>
+                <ThemedText style={styles.settingStatus}>
+                  保留情侣空间及其中的全部数据
+                </ThemedText>
+              </View>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+
+        <ThemedText style={[styles.sectionTitle, styles.sectionSpacing]}>
           PairNest 实例
         </ThemedText>
         <View style={styles.card}>
@@ -1126,6 +1621,12 @@ export function SettingsPanel({
           <TouchableOpacity
             style={styles.actionRow}
             onPress={handleChangeServer}
+            disabled={
+              serverChangeLoading ||
+              recoveryCodeLoading ||
+              inviteLoading ||
+              deletionLoading
+            }
             activeOpacity={0.7}
           >
             <View style={styles.settingTextWrap}>
@@ -1133,81 +1634,12 @@ export function SettingsPanel({
                 退出并更换服务器
               </ThemedText>
               <ThemedText style={styles.settingStatus}>
-                仅清除本机登录和实例地址，不删除服务端数据
+                先注销当前设备，再清除本机登录和实例地址；保留设备恢复凭证
               </ThemedText>
             </View>
-          </TouchableOpacity>
-        </View>
-
-        <ThemedText style={[styles.sectionTitle, styles.sectionSpacing]}>
-          高级设置
-        </ThemedText>
-        <View style={styles.card}>
-          <View style={[styles.advancedGroupHeader, styles.optionRowBorder]}>
-            <ThemedText style={styles.advancedGroupTitle}>
-              聊天身份
-            </ThemedText>
-            <ThemedText style={styles.settingStatus}>
-              {CHAT_ROLE_LABELS[role]} · 由服务器绑定
-            </ThemedText>
-          </View>
-          <TouchableOpacity
-            style={[styles.actionRow, styles.optionRowBorder]}
-            onPress={() => void handleToggleArchiveStash()}
-            activeOpacity={0.7}
-            accessibilityRole="switch"
-            accessibilityState={{ checked: archiveStashEnabled }}
-          >
-            <View style={styles.settingTextWrap}>
-              <ThemedText style={styles.optionLabel}>
-                典藏扭蛋入口
-              </ThemedText>
-              <ThemedText style={styles.settingStatus}>
-                开启后塞扭蛋时才显示典藏类型，默认不会暴露给对方
-              </ThemedText>
-            </View>
-            <View
-              style={[
-                styles.switch,
-                archiveStashEnabled && styles.switchActive,
-              ]}
-            >
-              <View
-                style={[
-                  styles.switchThumb,
-                  archiveStashEnabled && styles.switchThumbActive,
-                ]}
-              />
-            </View>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.actionRow, styles.optionRowBorder]}
-            onPress={() => void handleToggleArchivePreview()}
-            activeOpacity={0.7}
-            accessibilityRole="switch"
-            accessibilityState={{ checked: archivePreviewEnabled }}
-          >
-            <View style={styles.settingTextWrap}>
-              <ThemedText style={styles.optionLabel}>
-                典藏特效预览
-              </ThemedText>
-              <ThemedText style={styles.settingStatus}>
-                开启后扭蛋页只播放本机假动画，不走后端也不通知对方
-              </ThemedText>
-            </View>
-            <View
-              style={[
-                styles.switch,
-                archivePreviewEnabled && styles.switchActive,
-              ]}
-            >
-              <View
-                style={[
-                  styles.switchThumb,
-                  archivePreviewEnabled && styles.switchThumbActive,
-                ]}
-              />
-            </View>
+            {serverChangeLoading ? (
+              <ActivityIndicator size="small" color={AppColors.danger} />
+            ) : null}
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -1381,6 +1813,59 @@ const styles = createThemedStyleSheet({
     paddingHorizontal: 16,
     paddingVertical: 16,
   },
+  invitationBlock: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    gap: 8,
+    backgroundColor: "rgba(147,181,208,0.08)",
+  },
+  invitationTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: AppColors.primary,
+  },
+  invitationCode: {
+    fontSize: 16,
+    lineHeight: 24,
+    fontWeight: "800",
+    letterSpacing: 0.8,
+    color: AppColors.text,
+  },
+  invitationCopyButton: {
+    minHeight: 38,
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 2,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: "rgba(147,181,208,0.15)",
+  },
+  invitationCopyText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: AppColors.primary,
+  },
+  recoveryWarning: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: "#B7791F",
+  },
+  deletionStatusBlock: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: "rgba(183,121,31,0.08)",
+  },
+  deletionStatusTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#B7791F",
+  },
   layoutSummaryRow: {
     minHeight: 72,
     flexDirection: "row",
@@ -1483,18 +1968,6 @@ const styles = createThemedStyleSheet({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 16,
-  },
-  advancedGroupHeader: {
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 10,
-    gap: 4,
-    backgroundColor: "rgba(112,166,170,0.05)",
-  },
-  advancedGroupTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: AppColors.text,
   },
   dangerLabel: {
     fontSize: 15,

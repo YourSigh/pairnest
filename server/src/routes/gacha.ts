@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { randomUUID } from 'crypto';
 import { Router } from 'express';
 import { prisma } from '../db';
 import {
@@ -28,6 +29,7 @@ import {
 import { getAuthenticatedRole } from '../middleware/auth';
 import { broadcastChatMessage, broadcastGachaEvent } from '../ws';
 import { getShanghaiToday } from '../lib/check-ins';
+import { requireCurrentCoupleId } from '../lib/tenant-context';
 
 export const gachaRouter = Router();
 
@@ -53,7 +55,7 @@ async function broadcastGachaShareUpdates(draw: Parameters<typeof updateGachaSha
   const updatedMessages = await updateGachaShareMessagesForDraw(draw);
   if (updatedMessages.length === 0) return;
   const dtos = await toMessageDtos(updatedMessages);
-  dtos.forEach(broadcastChatMessage);
+  dtos.forEach((dto) => broadcastChatMessage(dto));
 }
 
 function getShanghaiDayBounds(date: string) {
@@ -61,16 +63,20 @@ function getShanghaiDayBounds(date: string) {
   return { start, end: new Date(start.getTime() + 24 * 60 * 60 * 1000) };
 }
 
-function getGachaDailyStateId(date: string, role: 'female' | 'male') {
-  return `gacha-day-${date}-${role}`;
+function createGachaDailyStateId() {
+  return `gacha-day-${randomUUID()}`;
 }
 
 async function getGachaEligibility(role: 'female' | 'male') {
   const date = getShanghaiToday();
   const { start, end } = getShanghaiDayBounds(date);
   const [checkIn, dailyState, todayDraws] = await Promise.all([
-    prisma.coupleCheckIn.findUnique({ where: { date_role: { date, role } } }),
-    prisma.gachaDailyState.findUnique({ where: { date_role: { date, role } } }),
+    prisma.coupleCheckIn.findUnique({
+      where: { coupleId_date_role: { coupleId: requireCurrentCoupleId(), date, role } },
+    }),
+    prisma.gachaDailyState.findUnique({
+      where: { coupleId_date_role: { coupleId: requireCurrentCoupleId(), date, role } },
+    }),
     prisma.gachaDraw.findMany({
       where: { drawnBy: role, pool: 'limited', createdAt: { gte: start, lt: end } },
       select: { id: true, status: true },
@@ -372,6 +378,7 @@ gachaRouter.post('/eggs', async (req, res) => {
   const item = await prisma.gachaEgg.create({
     data: {
       id: createGachaId('egg'),
+      coupleId: requireCurrentCoupleId(),
       eggType,
       title,
       description,
@@ -490,6 +497,7 @@ gachaRouter.post('/draw', async (req, res) => {
     const createdDraw = await prisma.gachaDraw.create({
       data: {
         id: createGachaId('draw'),
+        coupleId: requireCurrentCoupleId(),
         pool: 'normal',
         source: 'system',
         eggType: template.eggType,
@@ -542,10 +550,22 @@ gachaRouter.post('/draw', async (req, res) => {
           const now = new Date();
           const [checkIn, dailyState, activeDraw] = await Promise.all([
             tx.coupleCheckIn.findUnique({
-              where: { date_role: { date: eligibilityBeforeDraw.date, role } },
+              where: {
+                coupleId_date_role: {
+                  coupleId: requireCurrentCoupleId(),
+                  date: eligibilityBeforeDraw.date,
+                  role,
+                },
+              },
             }),
             tx.gachaDailyState.findUnique({
-              where: { date_role: { date: eligibilityBeforeDraw.date, role } },
+              where: {
+                coupleId_date_role: {
+                  coupleId: requireCurrentCoupleId(),
+                  date: eligibilityBeforeDraw.date,
+                  role,
+                },
+              },
             }),
             tx.gachaDraw.findFirst({
               where: {
@@ -562,10 +582,15 @@ gachaRouter.post('/draw', async (req, res) => {
 
           await tx.gachaDailyState.upsert({
             where: {
-              date_role: { date: eligibilityBeforeDraw.date, role },
+              coupleId_date_role: {
+                coupleId: requireCurrentCoupleId(),
+                date: eligibilityBeforeDraw.date,
+                role,
+              },
             },
             create: {
-              id: getGachaDailyStateId(eligibilityBeforeDraw.date, role),
+              id: createGachaDailyStateId(),
+              coupleId: requireCurrentCoupleId(),
               date: eligibilityBeforeDraw.date,
               role,
             },
@@ -646,6 +671,7 @@ gachaRouter.post('/draw', async (req, res) => {
             return tx.gachaDraw.create({
               data: {
                 id: createGachaId('draw'),
+                coupleId: requireCurrentCoupleId(),
                 pool: 'limited',
                 source: 'custom',
                 eggType: egg.eggType,
@@ -670,6 +696,7 @@ gachaRouter.post('/draw', async (req, res) => {
           return tx.gachaDraw.create({
             data: {
               id: createGachaId('draw'),
+              coupleId: requireCurrentCoupleId(),
               pool: 'limited',
               source: 'system',
               eggType: template.eggType,
@@ -780,11 +807,23 @@ gachaRouter.post('/draws/:id/return', async (req, res) => {
   }
   const [checkIn, dailyState, legacyReturnUsed] = await Promise.all([
     prisma.coupleCheckIn.findUnique({
-      where: { date_role: { date, role: actorRole } },
+      where: {
+        coupleId_date_role: {
+          coupleId: requireCurrentCoupleId(),
+          date,
+          role: actorRole,
+        },
+      },
       select: { gachaReturnUsed: true },
     }),
     prisma.gachaDailyState.findUnique({
-      where: { date_role: { date, role: actorRole } },
+      where: {
+        coupleId_date_role: {
+          coupleId: requireCurrentCoupleId(),
+          date,
+          role: actorRole,
+        },
+      },
       select: { returnUsed: true },
     }),
     prisma.gachaDraw.count({
@@ -805,10 +844,15 @@ gachaRouter.post('/draws/:id/return', async (req, res) => {
     async (tx) => {
       await tx.gachaDailyState.upsert({
         where: {
-          date_role: { date, role: actorRole },
+          coupleId_date_role: {
+            coupleId: requireCurrentCoupleId(),
+            date,
+            role: actorRole,
+          },
         },
         create: {
-          id: getGachaDailyStateId(date, actorRole),
+          id: createGachaDailyStateId(),
+          coupleId: requireCurrentCoupleId(),
           date,
           role: actorRole,
           returnUsed: true,

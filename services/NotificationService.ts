@@ -167,7 +167,7 @@ class NotificationServiceImpl {
   async showTestNotification() {
     await this.prepare();
     await this.showNotification(
-      "宝宝发来一条消息",
+      "伴侣发来一条消息",
       "如果你看到顶部弹窗和锁屏提醒，消息通知就设置好啦",
       {
         type: "chat-message",

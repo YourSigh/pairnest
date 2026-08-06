@@ -1,66 +1,77 @@
-# PairNest v0.1 deployment
+# PairNest backend deployment
 
 [简体中文](deployment.zh-CN.md)
 
-This guide deploys one PairNest instance for one couple. The included Compose
-stack contains MySQL, a one-shot Prisma migration service, and the API. It does
-not include a reverse proxy, automatic HTTPS, or a container registry workflow.
+This guide deploys one self-hosted PairNest API that can hold many isolated
+couple spaces. The included Compose stack contains MySQL, a one-shot Prisma
+migration service, and the API. All commands below act on the Docker engine of
+the machine where you run them; they do not configure a remote server,
+registry, domain, reverse proxy, or automatic HTTPS.
 
 ## 1. Requirements
 
 - Docker Engine
 - Docker Compose v2 (`docker compose version`)
 - Approximately 1 GB of free memory for a small instance
-- HTTPS termination when the API is reachable from the Internet
+- Your own HTTPS termination before the API is reachable from the Internet
 
 ## 2. Create local configuration
+
+From the repository root:
 
 ```bash
 cp .env.example .env
 ```
 
-Fill every required blank in `.env`. Generate independent secrets:
+Fill every required blank. Generate independent values:
 
 ```bash
 openssl rand -hex 24
 openssl rand -hex 24
 openssl rand -hex 32
-openssl rand -hex 32
 ```
 
-Use the first two URL-safe hexadecimal values for
-`PAIRNEST_DB_PASSWORD` and `PAIRNEST_DB_ROOT_PASSWORD`. Use the remaining
-values for `PAIRNEST_APP_SHARED_SECRET` and
-`PAIRNEST_AUTH_TOKEN_SECRET`.
+Use the first two URL-safe hexadecimal values for `PAIRNEST_DB_PASSWORD` and
+`PAIRNEST_DB_ROOT_PASSWORD`. Use the final value for
+`PAIRNEST_AUTH_TOKEN_SECRET`, which must contain at least 32 characters.
 
 Never commit `.env`. Do not reuse passwords, JWT secrets, signing keys, or data
-from another PairNest deployment.
+from another deployment.
 
 Important settings:
 
-| Variable | Purpose |
-| --- | --- |
-| `PAIRNEST_DB_*` | Database name, user, and independent passwords |
-| `PAIRNEST_APP_SHARED_SECRET` | Secret used to activate an authorized device |
-| `PAIRNEST_AUTH_TOKEN_SECRET` | Signs and protects authentication state |
-| `PAIRNEST_API_BIND` | Host interface; defaults to `127.0.0.1` |
-| `PAIRNEST_API_PORT` | Host API port; defaults to `4000` |
-| `PAIRNEST_CORS_ORIGIN` | Allowed browser origin or comma-separated origins |
-| `PAIRNEST_TRUST_PROXY` | Enable only behind a correctly configured proxy |
-| `PAIRNEST_TIMEZONE` | Container timezone; defaults to `UTC` |
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PAIRNEST_DB_NAME` / `PAIRNEST_DB_USER` | `pairnest` | MySQL database and application user |
+| `PAIRNEST_DB_PASSWORD` / `PAIRNEST_DB_ROOT_PASSWORD` | required | Independent MySQL passwords |
+| `PAIRNEST_AUTH_TOKEN_SECRET` | required | Signs access tokens and pseudonymizes authentication-attempt keys |
+| `PAIRNEST_API_BIND` / `PAIRNEST_API_PORT` | `127.0.0.1` / `4000` | Host interface and port |
+| `PAIRNEST_CORS_ORIGIN` | `*` | Browser origin or comma-separated origins |
+| `PAIRNEST_TRUST_PROXY` | `false` | Trust proxy-provided client addresses and protocol |
+| `PAIRNEST_TIMEZONE` | `UTC` | MySQL and API container timezone |
+| `PAIRNEST_REQUEST_TIMEOUT_MS` | `300000` | HTTP request timeout; clamped to 30 seconds–30 minutes |
+| `PAIRNEST_STORAGE_QUOTA_BYTES` | `2147483648` | Recorded upload quota for each couple (2 GiB) |
+| `PAIRNEST_MAX_VIDEO_UPLOAD_BYTES` | `104857600` | Maximum single video upload (100 MiB) |
+| `PAIRNEST_AI_REQUEST_TIMEOUT_MS` | `120000` | AI upstream timeout |
+| `PAIRNEST_TRANSCRIPTION_REQUEST_TIMEOUT_MS` | `120000` | Transcription upstream timeout |
 
-AI and transcription variables are optional. Blank values keep the
-corresponding external integration disabled.
+Enable `PAIRNEST_TRUST_PROXY` only when every direct path to the API passes
+through a trusted proxy that overwrites forwarding headers. PairNest uses the
+resolved client IP for anonymous rate limits.
+
+AI and transcription settings are optional. Blank URL, key, or model values
+keep the corresponding integration disabled. PairNest does not support a
+server-wide external AI context directory.
 
 ## 3. Validate and start
 
 Validate the resolved Compose file before starting:
 
 ```bash
-docker compose config
+docker compose config --quiet
 ```
 
-Start the stack:
+Start the local stack:
 
 ```bash
 docker compose up -d
@@ -70,7 +81,7 @@ docker compose ps
 Startup order is:
 
 1. MySQL starts and passes its healthcheck.
-2. `migrate` runs `prisma migrate deploy` against the new database.
+2. `migrate` runs `prisma migrate deploy` against that MySQL service.
 3. The API starts and passes `/health`.
 
 The migration container is expected to show `Exited (0)` after a successful
@@ -89,82 +100,147 @@ Follow logs when startup fails:
 docker compose logs -f db migrate api
 ```
 
-## 4. Connect the mobile app
+## 4. Publish through HTTPS
 
 For local development on another device, set `PAIRNEST_API_BIND=0.0.0.0` and
-use the host's trusted-LAN address in the app, for example
-`http://192.168.x.x:4000`.
+use the host's trusted-LAN address, for example `http://192.168.x.x:4000`.
 
-Plain HTTP exposes credentials and relationship data to the network. Do not use
-it over the public Internet. Put the API behind an HTTPS reverse proxy and set
-the mobile app's runtime instance URL to that public HTTPS URL.
+Plain HTTP exposes credentials and relationship data to the network. Do not
+use it over the public Internet. Keep the API bound to `127.0.0.1`, put it
+behind your own HTTPS reverse proxy, and configure WebSocket forwarding for
+`/ws`. Allow a request body slightly larger than your configured video limit;
+128 MiB is sufficient for the default 100 MiB video limit plus multipart
+overhead.
 
-The v0.1 Compose file intentionally does not ship Caddy or another automatic
-TLS service.
+Example Nginx location settings (certificate and DNS configuration omitted):
 
-## 5. Persistent data
+```nginx
+client_max_body_size 128m;
+
+location / {
+    proxy_pass http://127.0.0.1:4000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+}
+```
+
+Then set `PAIRNEST_TRUST_PROXY=true` and restrict
+`PAIRNEST_CORS_ORIGIN` if a browser client is used. The repository intentionally
+does not ship Caddy or any automatic TLS configuration.
+
+## 5. Create and recover a couple space
+
+On first launch a user creates a space or enters an invitation. Creation
+returns two different secrets:
+
+- A 26-significant-character invitation, displayed in groups, which expires
+  after 24 hours and is consumed after the target member joins.
+- A persistent recovery key with the same entropy, which stays valid until an
+  authenticated member rotates it.
+
+Only hashes are stored on the server. Keep the recovery key in a password
+manager or similarly protected location. Creating a new invitation invalidates
+the previous invitation; rotating the recovery key invalidates the old key.
+Expired invitation hashes are cleared by a maintenance task that runs every six
+hours. An open space that never activated any device session is treated as
+abandoned and deleted after seven days.
+
+The server binds each device to Partner A or Partner B. A valid session's JWT
+contains that confirmed member and couple identity. Logging out revokes the
+session, and a recovery activation replaces and disconnects the previous
+session for that slot.
+
+## 6. Tenant isolation, limits, and deletion
+
+All business tables are scoped by `coupleId` and linked to the owning couple by
+foreign keys with cascading deletion. API and WebSocket operations derive the
+couple and role from the authenticated session.
+
+The main fixed-window defaults are:
+
+| Scope | Operation | Default |
+| --- | --- | --- |
+| IP | Create a couple | 5/hour |
+| IP | Validate or activate | 30/15 minutes |
+| IP + device | Failed activations | 5/15 minutes, then a 60-minute lock |
+| Couple | Media uploads | 120/hour |
+| Couple | AI requests | 60/hour and 300/day |
+| Couple | Transcription | 20/hour and 100/day |
+| Couple | Invitations / recovery-key rotation | 10/hour / 5/hour |
+
+Additional generation and deletion endpoints have couple-scoped limits. These
+controls reduce abuse but do not replace host monitoring or provider-side
+spending limits.
+
+An unpaired space is deleted immediately on request. A paired space requires
+confirmation by the other member, or a second confirmation by the requester
+after seven days. Database rows and recorded media are removed, and its active
+WebSockets are disconnected. Independent backups and third-party provider data
+must be handled separately. See [Privacy](privacy.md).
+
+## 7. Persistent data and backups
 
 Compose creates two named volumes:
 
 - `pairnest_db-data` for MySQL
-- `pairnest_uploads` for chat and timeline media
+- `pairnest_uploads` for chat, timeline, and sticker media
 
 The exact prefix follows the Compose project name. `docker compose down`
 removes containers and the network but keeps both volumes.
 
-Do not remove volumes unless you intentionally want to destroy all PairNest
-data. Database contents and uploaded files belong together and must be backed
-up and restored as one set.
+Do not run `docker compose down -v` unless you intentionally want to destroy
+all PairNest data. Database contents and uploaded files belong together and
+must be backed up and restored as one set. PairNest v0.1 does not provide
+encrypted or automatic backups.
 
-## 6. Update
+## 8. Update and migrate
 
-Before updating, back up both the MySQL database and upload volume using your
-normal host or Docker backup procedure.
-
-For a source checkout:
+Back up both volumes before updating. For a source checkout:
 
 ```bash
-docker compose build api
+docker compose build api migrate
 docker compose up -d
 docker compose ps
 ```
 
-The migration service runs pending committed migrations before the new API
-starts. Review migration notes before upgrading across versions.
+The one-shot migration service applies committed Prisma migrations before the
+new API starts. Do not replace `prisma migrate deploy` with `prisma db push` in
+production. Read [Migration notes](migration.md) before upgrading a legacy
+single-couple database.
 
-## 7. Optional integrations
+## 9. Optional AI and transcription
 
-Enabling AI or transcription can send prompts, relationship history, titles,
-memories, or raw audio to the configured third party. Read
-[privacy.md](privacy.md) first.
+Enabling either integration sends data to the configured third party. Keep
+provider URLs, workspace identifiers, and keys only in `.env` and review the
+provider's privacy and spending controls.
 
-PairNest supports the traditional OpenAI-compatible `audio/transcriptions`
-endpoint and the Qwen3-ASR-Flash-compatible `chat/completions` endpoint. Select
-one with `PAIRNEST_TRANSCRIPTION_API_MODE`:
+PairNest accepts an OpenAI-compatible chat-completions URL for AI. For audio it
+supports an OpenAI-compatible `audio/transcriptions` endpoint and a
+Qwen-compatible `chat/completions` endpoint:
 
 ```dotenv
-# Traditional multipart upload
+PAIRNEST_AI_API_URL=https://provider.example/v1
+PAIRNEST_AI_API_KEY=replace-me
+PAIRNEST_AI_MODEL=replace-me
+PAIRNEST_AI_REQUEST_TIMEOUT_MS=120000
+
 PAIRNEST_TRANSCRIPTION_API_MODE=audio-transcriptions
 PAIRNEST_TRANSCRIPTION_API_URL=https://provider.example/v1/audio/transcriptions
 PAIRNEST_TRANSCRIPTION_API_KEY=replace-me
 PAIRNEST_TRANSCRIPTION_MODEL=whisper-1
-
-# Or Qwen-compatible chat completions
-PAIRNEST_TRANSCRIPTION_API_MODE=qwen-chat-completions
-PAIRNEST_TRANSCRIPTION_API_URL=https://workspace.example/compatible-mode/v1
-PAIRNEST_TRANSCRIPTION_API_KEY=replace-me
-PAIRNEST_TRANSCRIPTION_MODEL=qwen3-asr-flash
+PAIRNEST_TRANSCRIPTION_LANGUAGE=zh
+PAIRNEST_TRANSCRIPTION_REQUEST_TIMEOUT_MS=120000
 ```
 
-The Qwen URL may be either the API base or the complete `/chat/completions`
-URL. Keep all real provider URLs, workspace identifiers, and keys in `.env`.
+For `qwen-chat-completions`, the transcription URL may be either the API base
+or the complete `/chat/completions` URL. A 120-second local timeout does not
+guarantee that a provider stops processing a request already received.
 
-AI context directories are not mounted by the default Compose file. If you
-choose to use one, add an explicit read-only bind mount in a private Compose
-override and set `PAIRNEST_AI_CONTEXT_DIR` to the matching path inside the
-container. Never mount a home directory or filesystem root.
-
-## 8. Troubleshooting
+## 10. Troubleshooting
 
 `migrate` exits with a non-zero status:
 
@@ -173,8 +249,7 @@ docker compose logs migrate
 docker compose ps db
 ```
 
-Confirm that the database values are non-empty, URL-safe, and consistent. Do
-not replace `prisma migrate deploy` with `prisma db push` in production.
+Confirm that database values are non-empty, URL-safe, and consistent.
 
 The API is unhealthy:
 
@@ -186,7 +261,7 @@ docker compose exec api node -e \
 
 The phone cannot connect:
 
-- Confirm the app uses the runtime PairNest instance URL.
-- Confirm `PAIRNEST_API_BIND` permits the intended interface.
-- Check the host firewall and reverse proxy.
-- Use HTTPS outside a trusted LAN.
+- Confirm that the app uses the correct runtime PairNest instance URL.
+- Confirm that `PAIRNEST_API_BIND` permits the intended interface.
+- Check DNS, the host firewall, the reverse proxy, `/v1/ping`, and `/ws`.
+- Use HTTPS outside a local or trusted development LAN.

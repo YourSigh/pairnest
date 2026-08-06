@@ -6,7 +6,7 @@ import {
   isValidDateString,
   isValidMood,
 } from '../lib/check-ins';
-import { getAuthenticatedRole } from '../middleware/auth';
+import { getAuthenticatedRole, getCoupleId } from '../middleware/auth';
 
 export const checkInsRouter = Router();
 
@@ -80,6 +80,7 @@ checkInsRouter.get('/', async (req, res) => {
 });
 
 checkInsRouter.put('/today', async (req, res) => {
+  const coupleId = getCoupleId(res);
   const role = getAuthenticatedRole(res);
   const mood = typeof req.body?.mood === 'string' ? req.body.mood.trim() : '';
   const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
@@ -99,9 +100,10 @@ checkInsRouter.put('/today', async (req, res) => {
   }
 
   const entry = await prisma.coupleCheckIn.upsert({
-    where: { date_role: { date: today, role } },
+    where: { coupleId_date_role: { coupleId, date: today, role } },
     create: {
       id: createCheckInId(role),
+      coupleId,
       date: today,
       role,
       mood,
@@ -121,6 +123,7 @@ checkInsRouter.put('/today', async (req, res) => {
 });
 
 checkInsRouter.delete('/today/:role', async (req, res) => {
+  const coupleId = getCoupleId(res);
   const role = getAuthenticatedRole(res);
   const today = getShanghaiToday();
 
@@ -131,7 +134,7 @@ checkInsRouter.delete('/today/:role', async (req, res) => {
 
   try {
     await prisma.coupleCheckIn.delete({
-      where: { date_role: { date: today, role } },
+      where: { coupleId_date_role: { coupleId, date: today, role } },
     });
     res.json({ ok: true, today });
   } catch {

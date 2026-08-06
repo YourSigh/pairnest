@@ -4,9 +4,14 @@
 
 [简体中文](README.zh-CN.md)
 
-PairNest combines an Expo React Native client with a self-hosted
-Express, Prisma, and MySQL API. One deployment serves one couple; it is not a
-multi-tenant service.
+PairNest combines an Expo React Native client with a self-hosted Express,
+Prisma, and MySQL API. A single API deployment can host many couples. Each
+couple gets one isolated space for exactly two server-confirmed member slots,
+Partner A and Partner B.
+
+Every business record is scoped by `coupleId`. The API derives the couple and
+member identity from the authenticated JWT/session context; request bodies,
+role headers, and WebSocket messages cannot choose another identity.
 
 ## Features
 
@@ -19,26 +24,50 @@ multi-tenant service.
 
 ## Start the backend
 
-Install Docker Engine and Docker Compose v2, then:
+Install Docker Engine and Docker Compose v2, then run these commands on the
+machine that will self-host PairNest:
 
 ```bash
 cp .env.example .env
 ```
 
-Set `PAIRNEST_DB_PASSWORD`, `PAIRNEST_DB_ROOT_PASSWORD`,
-`PAIRNEST_APP_SHARED_SECRET`, and `PAIRNEST_AUTH_TOKEN_SECRET` to independent
-random values. Start and verify the stack:
+Set `PAIRNEST_DB_PASSWORD`, `PAIRNEST_DB_ROOT_PASSWORD`, and
+`PAIRNEST_AUTH_TOKEN_SECRET` to independent random values. Then start and
+verify the local stack:
 
 ```bash
-docker compose config
+docker compose config --quiet
 docker compose up -d
 docker compose ps
 curl http://127.0.0.1:4000/health
 ```
 
-Use an HTTPS reverse proxy before exposing the API to the Internet. See
-[Backend deployment](docs/deployment.md) for networking, persistence, backups,
-updates, and troubleshooting.
+Compose builds the API locally, starts MySQL, runs `prisma migrate deploy`, and
+keeps the database and uploads in named volumes. It does not publish an image,
+configure DNS, or provide automatic HTTPS. Put the API behind your own HTTPS
+reverse proxy before making it reachable from the Internet.
+
+See [Backend deployment](docs/deployment.md) for configuration, persistence,
+limits, backups, updates, and troubleshooting.
+
+## Pairing, recovery, and deletion
+
+Creating a space returns an invitation with 26 significant characters
+(displayed in groups) and a separate recovery key. An invitation expires after
+24 hours, is consumed after the invited slot joins, and is replaced whenever a
+new invitation is created. Keep the persistent recovery key somewhere private;
+rotating it invalidates the old one.
+
+The server binds a device to Partner A or Partner B and includes that confirmed
+identity in its session and JWT. Logging out revokes the server session and
+disconnects its WebSocket. A recovery flow can replace a lost or logged-out
+device and revokes the previous session for the recovered slot.
+
+Deleting an open space completes immediately. For a paired space, deletion
+requires the other partner to confirm, or the requester to confirm again after
+seven days. The operation removes the couple's database rows and recorded
+media, but cannot erase independent backups or data already sent to an enabled
+third-party provider.
 
 ## Run and build the app
 
@@ -52,8 +81,11 @@ npm run lint
 npm run android
 ```
 
-The app asks for the PairNest backend URL on first launch. Use HTTPS outside a
-trusted development network.
+The app uses a runtime PairNest API URL. Production builds accept HTTPS
+instances; plain HTTP is reserved for local or trusted-LAN development. An
+operator may provide a public default with
+`EXPO_PUBLIC_PAIRNEST_DEFAULT_API_URL`, but this value is embedded in the app
+and must never contain a secret.
 
 See [App builds](docs/app-build.md) for Android APK/AAB, iOS, EAS cloud builds,
 and local builds.
@@ -67,17 +99,24 @@ npm run build
 npm run dev
 ```
 
-Local server development requires `PAIRNEST_DATABASE_URL`,
-`PAIRNEST_APP_SHARED_SECRET`, and `PAIRNEST_AUTH_TOKEN_SECRET`. Docker Compose
-is the simplest option for most contributors.
+Local server development requires `PAIRNEST_DATABASE_URL` and a
+`PAIRNEST_AUTH_TOKEN_SECRET` of at least 32 characters. Docker Compose is the
+simplest option for most contributors.
 
 ## Privacy and security
 
-PairNest stores sensitive relationship, health, chat, and media data. Read
-[Privacy](docs/privacy.md) before exposing an instance to the Internet or
-enabling third-party AI/transcription services.
+PairNest stores sensitive relationship, health, chat, and media data. The
+default per-couple upload quota is 2 GiB and the default single-video limit is
+100 MiB. IP- and couple-scoped rate limits reduce accidental and anonymous
+abuse, but they are not a substitute for HTTPS, backups, monitoring, and a
+properly secured host.
 
-Report security issues privately as described in [SECURITY.md](SECURITY.md).
+Read [Privacy](docs/privacy.md) and the
+[migration notes](docs/migration.md) before exposing an instance to the
+Internet or upgrading a legacy database. Report security issues privately as
+described in [SECURITY.md](SECURITY.md).
+
+Deferred work is listed in [ROADMAP.md](ROADMAP.md).
 
 ## License
 

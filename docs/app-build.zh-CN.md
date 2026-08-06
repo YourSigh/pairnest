@@ -75,9 +75,13 @@ eas build:configure
 发布过 App 后不要随意更改 bundle identifier 或 package name，否则系统会把它视为
 另一个 App。
 
-后端地址默认不写入安装包，用户首次启动时自行填写。仅开发专用构建可以设置
-`EXPO_PUBLIC_PAIRNEST_DEFAULT_API_URL`；`EXPO_PUBLIC_*` 会被打进客户端，绝对不能
-放密钥。
+后端地址在运行时选择。运营者可以通过 `EXPO_PUBLIC_PAIRNEST_DEFAULT_API_URL`
+提供公开默认地址，但所有 `EXPO_PUBLIC_*` 都会写入客户端，绝对不能包含密钥。正式
+构建要求使用 HTTPS PairNest 地址；只有开发构建在 localhost 或私有网络测试时才接受
+明文 HTTP。
+
+实例地址本身不是认证密钥。用户仍需创建情侣空间，或输入伴侣提供的 26 字符邀请加入。
+绝对不要把邀请密钥或恢复密钥写进任何 `EXPO_PUBLIC_*` 变量。
 
 ## 4. Android APK
 

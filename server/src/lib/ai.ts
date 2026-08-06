@@ -1,7 +1,6 @@
-import { readdir, readFile, stat } from 'fs/promises';
-import path from 'path';
 import { prisma } from '../db';
 import { ChatRole } from './chat';
+import { requireCurrentCoupleId } from './tenant-context';
 
 type ChatCompletionMessage = {
   role: 'system' | 'user' | 'assistant';
@@ -31,18 +30,9 @@ const MEMORY_SUBJECT_LABELS: Record<string, string> = {
   unknown: '未分类',
 };
 
-const DEFAULT_CONTEXT_CANDIDATES = [
-  '/app/ai-context',
-  path.resolve(process.cwd(), 'ai-context'),
-];
-
-let externalContextCache:
-  | {
-      expiresAt: number;
-      text: string;
-      source: string | null;
-    }
-  | null = null;
+const DEFAULT_AI_REQUEST_TIMEOUT_MS = 120_000;
+const MIN_AI_REQUEST_TIMEOUT_MS = 1_000;
+const MAX_AI_REQUEST_TIMEOUT_MS = 10 * 60_000;
 
 function getEnv(...keys: string[]) {
   for (const key of keys) {
@@ -52,11 +42,52 @@ function getEnv(...keys: string[]) {
   return '';
 }
 
-function getMaxContextChars() {
-  const value = Number(
-    getEnv('PAIRNEST_AI_CONTEXT_MAX_CHARS'),
+function getAiRequestTimeoutMs() {
+  const raw = getEnv('PAIRNEST_AI_REQUEST_TIMEOUT_MS');
+  if (!raw) return DEFAULT_AI_REQUEST_TIMEOUT_MS;
+  const configured = Number(raw);
+  if (!Number.isFinite(configured)) return DEFAULT_AI_REQUEST_TIMEOUT_MS;
+  return Math.min(
+    MAX_AI_REQUEST_TIMEOUT_MS,
+    Math.max(MIN_AI_REQUEST_TIMEOUT_MS, Math.trunc(configured)),
   );
-  return Number.isFinite(value) && value > 0 ? value : 60_000;
+}
+
+function createAiRequestAbortScope(upstreamSignal?: AbortSignal) {
+  const controller = new AbortController();
+  const timeoutMs = getAiRequestTimeoutMs();
+  let timedOut = false;
+
+  const abortFromUpstream = () => {
+    controller.abort(upstreamSignal?.reason);
+  };
+  if (upstreamSignal?.aborted) {
+    abortFromUpstream();
+  } else {
+    upstreamSignal?.addEventListener('abort', abortFromUpstream, { once: true });
+  }
+
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort(new Error('AI request timed out'));
+  }, timeoutMs);
+
+  return {
+    signal: controller.signal,
+    timeoutMs,
+    didTimeOut: () => timedOut,
+    dispose: () => {
+      clearTimeout(timer);
+      upstreamSignal?.removeEventListener('abort', abortFromUpstream);
+    },
+  };
+}
+
+function throwAiRequestError(error: unknown, timedOut: boolean, timeoutMs: number): never {
+  if (timedOut) {
+    throw new Error(`AI 服务请求超时（${Math.ceil(timeoutMs / 1000)} 秒）`);
+  }
+  throw error;
 }
 
 function normalizeChatCompletionsUrl(url: string) {
@@ -83,88 +114,10 @@ export function isAiConfigured() {
   return Boolean(config.apiUrl && config.apiKey && config.model);
 }
 
-async function pathExists(targetPath: string) {
-  try {
-    await stat(targetPath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function resolveContextDir() {
-  const configured = getEnv('PAIRNEST_AI_CONTEXT_DIR');
-  const candidates = configured
-    ? configured.split(',').map((item) => item.trim()).filter(Boolean)
-    : DEFAULT_CONTEXT_CANDIDATES;
-
-  for (const candidate of candidates) {
-    if (await pathExists(candidate)) return candidate;
-  }
-  return null;
-}
-
-async function listMarkdownFiles(dir: string): Promise<string[]> {
-  const entries = await readdir(dir, { withFileTypes: true });
-  const files: string[] = [];
-
-  for (const entry of entries) {
-    if (entry.name.startsWith('.')) continue;
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...(await listMarkdownFiles(fullPath)));
-    } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {
-      files.push(fullPath);
-    }
-  }
-
-  return files;
-}
-
-export async function loadExternalMemoryContext() {
-  if (externalContextCache && externalContextCache.expiresAt > Date.now()) {
-    return externalContextCache;
-  }
-
-  const dir = await resolveContextDir();
-  if (!dir) {
-    externalContextCache = {
-      expiresAt: Date.now() + 30_000,
-      text: '',
-      source: null,
-    };
-    return externalContextCache;
-  }
-
-  const maxChars = getMaxContextChars();
-  const files = (await listMarkdownFiles(dir)).sort((a, b) =>
-    path.relative(dir, a).localeCompare(path.relative(dir, b)),
-  );
-  const chunks: string[] = [];
-  let used = 0;
-
-  for (const file of files) {
-    if (used >= maxChars) break;
-    const relative = path.relative(dir, file);
-    const content = await readFile(file, 'utf8');
-    const header = `\n\n--- ${relative} ---\n`;
-    const remaining = maxChars - used - header.length;
-    if (remaining <= 0) break;
-    const chunk = `${header}${content.slice(0, remaining)}`;
-    chunks.push(chunk);
-    used += chunk.length;
-  }
-
-  externalContextCache = {
-    expiresAt: Date.now() + 30_000,
-    text: chunks.join(''),
-    source: dir,
-  };
-  return externalContextCache;
-}
-
 async function loadAppMemories() {
+  const coupleId = requireCurrentCoupleId();
   const memories = await prisma.aiMemory.findMany({
+    where: { coupleId },
     orderBy: { updatedAt: 'desc' },
     take: 80,
   });
@@ -181,10 +134,7 @@ async function loadAppMemories() {
 }
 
 export async function buildAiSystemPrompt(currentRole: ChatRole) {
-  const [externalContext, appMemories] = await Promise.all([
-    loadExternalMemoryContext(),
-    loadAppMemories(),
-  ]);
+  const appMemories = await loadAppMemories();
   const currentName = CHAT_ROLE_NAMES[currentRole];
   const partnerRole: ChatRole = currentRole === 'female' ? 'male' : 'female';
   const partnerName = CHAT_ROLE_NAMES[partnerRole];
@@ -197,21 +147,16 @@ export async function buildAiSystemPrompt(currentRole: ChatRole) {
     `- female 是内部兼容角色，当前显示为 ${CHAT_ROLE_NAMES.female}。`,
     `- male 是内部兼容角色，当前显示为 ${CHAT_ROLE_NAMES.male}。`,
     '- 用户提到“我”时指当前对话者；提到“对象/伴侣”时通常指另一位成员。',
-    '- 外部长期记忆可能来自任一成员，回答时必须结合标注和当前对话者视角，不能臆测身份。',
+    '- 长期记忆可能来自任一成员，回答时必须结合标注和当前对话者视角，不能臆测身份。',
     '- 当用户问“我对象是什么样的人”时，优先回答当前对话人的对象是什么样的人。',
     '',
     '回答规则：',
     '1. 你可以使用下面的长期记忆回答问题；如果记忆不足，直接说你不确定，不要编。',
-    '2. “外部长期记忆”仅在实例管理员显式配置目录后读取。',
-    '3. “App 自动记忆”来自两位成员和 AI 的对话，两个人都可以查询。',
-    '4. 回答要自然、直接、中文优先，像一个靠谱的私有助手，不要过度煽情。',
-    '5. 对敏感关系/健康/财务建议要提醒不确定性，避免替用户做高风险决定。',
-    '6. 不要使用 Markdown 格式，不要使用 #、**、表格、代码块、Markdown 项目符号。需要分点时用自然短句或“1. 2. 3.”纯文本。',
-    '7. 除非用户问你是什么模型，否则不要解释模型供应商、底层模型或“我不是公开模型”之类的话。',
-    '',
-    externalContext.text
-      ? `外部长期记忆来源：${externalContext.source}\n${externalContext.text}`
-      : '外部长期记忆：未配置目录或目录为空。',
+    '2. “App 自动记忆”只来自当前情侣空间内两位成员和 AI 的对话，两个人都可以查询。',
+    '3. 回答要自然、直接、中文优先，像一个靠谱的私有助手，不要过度煽情。',
+    '4. 对敏感关系/健康/财务建议要提醒不确定性，避免替用户做高风险决定。',
+    '5. 不要使用 Markdown 格式，不要使用 #、**、表格、代码块、Markdown 项目符号。需要分点时用自然短句或“1. 2. 3.”纯文本。',
+    '6. 除非用户问你是什么模型，否则不要解释模型供应商、底层模型或“我不是公开模型”之类的话。',
     '',
     appMemories ? `App 自动记忆：\n${appMemories}` : 'App 自动记忆：暂无。',
   ].join('\n');
@@ -240,43 +185,51 @@ export async function runChatCompletion(messages: ChatCompletionMessage[]) {
     );
   }
 
-  const response = await fetch(config.apiUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: config.model,
-      messages,
-      temperature: 0.7,
-      stream: false,
-    }),
-  });
+  const request = createAiRequestAbortScope();
+  try {
+    const response = await fetch(config.apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: config.model,
+        messages,
+        temperature: 0.7,
+        stream: false,
+      }),
+      signal: request.signal,
+    });
 
-  const body = (await response.json().catch(() => null)) as
-    | {
-        choices?: Array<{ message?: { content?: unknown } }>;
-        error?: { message?: unknown };
-        message?: unknown;
-      }
-    | null;
+    const body = (await response.json().catch(() => null)) as
+      | {
+          choices?: Array<{ message?: { content?: unknown } }>;
+          error?: { message?: unknown };
+          message?: unknown;
+        }
+      | null;
 
-  if (!response.ok) {
-    const message =
-      typeof body?.error?.message === 'string'
-        ? body.error.message
-        : typeof body?.message === 'string'
-          ? body.message
-          : `AI 服务返回 ${response.status}`;
-    throw new Error(message);
+    if (!response.ok) {
+      const message =
+        typeof body?.error?.message === 'string'
+          ? body.error.message
+          : typeof body?.message === 'string'
+            ? body.message
+            : `AI 服务返回 ${response.status}`;
+      throw new Error(message);
+    }
+
+    const content = body?.choices?.[0]?.message?.content;
+    if (typeof content !== 'string' || !content.trim()) {
+      throw new Error('AI 服务没有返回有效内容');
+    }
+    return normalizeAiResponseContent(content);
+  } catch (error) {
+    throwAiRequestError(error, request.didTimeOut(), request.timeoutMs);
+  } finally {
+    request.dispose();
   }
-
-  const content = body?.choices?.[0]?.message?.content;
-  if (typeof content !== 'string' || !content.trim()) {
-    throw new Error('AI 服务没有返回有效内容');
-  }
-  return normalizeAiResponseContent(content);
 }
 
 export async function streamChatCompletion(options: {
@@ -291,72 +244,86 @@ export async function streamChatCompletion(options: {
     );
   }
 
-  const response = await fetch(config.apiUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: config.model,
-      messages: options.messages,
-      temperature: 0.7,
-      stream: true,
-    }),
-    signal: options.signal,
-  });
+  const request = createAiRequestAbortScope(options.signal);
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let completed = false;
+  try {
+    const response = await fetch(config.apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: config.model,
+        messages: options.messages,
+        temperature: 0.7,
+        stream: true,
+      }),
+      signal: request.signal,
+    });
 
-  if (!response.ok || !response.body) {
-    const body = (await response.json().catch(() => null)) as
-      | { error?: { message?: unknown }; message?: unknown }
-      | null;
-    const message =
-      typeof body?.error?.message === 'string'
-        ? body.error.message
-        : typeof body?.message === 'string'
-          ? body.message
-          : `AI 服务返回 ${response.status}`;
-    throw new Error(message);
-  }
+    if (!response.ok || !response.body) {
+      const body = (await response.json().catch(() => null)) as
+        | { error?: { message?: unknown }; message?: unknown }
+        | null;
+      const message =
+        typeof body?.error?.message === 'string'
+          ? body.error.message
+          : typeof body?.message === 'string'
+            ? body.message
+            : `AI 服务返回 ${response.status}`;
+      throw new Error(message);
+    }
 
-  const decoder = new TextDecoder();
-  const reader = response.body.getReader();
-  let buffer = '';
-  let content = '';
+    const decoder = new TextDecoder();
+    reader = response.body.getReader();
+    let buffer = '';
+    let content = '';
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
 
-    const events = buffer.split('\n\n');
-    buffer = events.pop() ?? '';
+      const events = buffer.split('\n\n');
+      buffer = events.pop() ?? '';
 
-    for (const event of events) {
-      for (const line of event.split('\n')) {
-        if (!line.startsWith('data:')) continue;
-        const data = line.slice(5).trim();
-        if (!data || data === '[DONE]') continue;
+      for (const event of events) {
+        for (const line of event.split('\n')) {
+          if (!line.startsWith('data:')) continue;
+          const data = line.slice(5).trim();
+          if (!data || data === '[DONE]') continue;
 
-        const parsed = JSON.parse(data) as StreamDelta;
-        if (parsed.error) {
-          throw new Error(
-            typeof parsed.error.message === 'string'
-              ? parsed.error.message
-              : 'AI 流式返回失败',
-          );
-        }
+          const parsed = JSON.parse(data) as StreamDelta;
+          if (parsed.error) {
+            throw new Error(
+              typeof parsed.error.message === 'string'
+                ? parsed.error.message
+                : 'AI 流式返回失败',
+            );
+          }
 
-        const delta = parsed.choices?.[0]?.delta?.content;
-        if (typeof delta === 'string' && delta) {
-          content += delta;
-          options.onDelta(delta);
+          const delta = parsed.choices?.[0]?.delta?.content;
+          if (typeof delta === 'string' && delta) {
+            content += delta;
+            options.onDelta(delta);
+          }
         }
       }
     }
-  }
 
-  return normalizeAiResponseContent(content);
+    completed = true;
+    return normalizeAiResponseContent(content);
+  } catch (error) {
+    throwAiRequestError(error, request.didTimeOut(), request.timeoutMs);
+  } finally {
+    if (reader) {
+      if (!completed) await reader.cancel().catch(() => undefined);
+      reader.releaseLock();
+    }
+    request.dispose();
+  }
 }
 
 function parseJsonArray(text: string): MemoryExtraction[] {
@@ -384,6 +351,7 @@ export async function rememberFromAiExchange(options: {
 }) {
   if (!isAiConfigured()) return;
 
+  const coupleId = requireCurrentCoupleId();
   const speakerName = CHAT_ROLE_NAMES[options.speakerRole];
   const extraction = await runChatCompletion([
     {
@@ -423,13 +391,14 @@ export async function rememberFromAiExchange(options: {
       options.speakerRole,
     );
     const existing = await prisma.aiMemory.findFirst({
-      where: { subjectRole, content },
+      where: { coupleId, subjectRole, content },
     });
     if (existing) continue;
 
     await prisma.aiMemory.create({
       data: {
         id: `aimem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        coupleId,
         subjectRole,
         sourceRole: options.speakerRole,
         content,

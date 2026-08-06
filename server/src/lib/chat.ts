@@ -1,4 +1,5 @@
 import { prisma } from '../db';
+import { requireCurrentCoupleId } from './tenant-context';
 
 export type ChatRole = 'female' | 'male';
 
@@ -484,6 +485,7 @@ export async function createGachaShareMessage(options: {
   return prisma.chatMessage.create({
     data: {
       id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      coupleId: requireCurrentCoupleId(),
       sender: options.sender,
       content: serializeGachaSharePayload(payload),
       messageType: 'gacha',
@@ -624,7 +626,7 @@ export async function toMessageDtoWithReply(
 export async function migrateLegacyChatFavorites() {
   const legacyFavorites = await prisma.chatMessage.findMany({
     where: { isFavorite: true },
-    select: { id: true },
+    select: { id: true, coupleId: true },
   });
   if (legacyFavorites.length === 0) return 0;
 
@@ -632,6 +634,7 @@ export async function migrateLegacyChatFavorites() {
     await tx.chatMessageFavorite.createMany({
       data: legacyFavorites.flatMap((message) =>
         CHAT_ROLES.map((ownerRole) => ({
+          coupleId: message.coupleId,
           messageId: message.id,
           ownerRole,
         })),
@@ -682,6 +685,7 @@ export async function createChatMessage(
   return prisma.chatMessage.create({
     data: {
       id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      coupleId: requireCurrentCoupleId(),
       sender,
       content: trimmed,
       messageType: 'text',
@@ -712,6 +716,7 @@ export async function createVoiceMessage(options: {
   return prisma.chatMessage.create({
     data: {
       id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      coupleId: requireCurrentCoupleId(),
       sender: options.sender,
       content: `[语音] ${Math.max(1, Math.round(options.durationMs / 1000))}秒`,
       messageType: 'voice',
@@ -750,6 +755,7 @@ export async function createImageMessage(options: {
   return prisma.chatMessage.create({
     data: {
       id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      coupleId: requireCurrentCoupleId(),
       sender: options.sender,
       content,
       messageType: 'image',
@@ -808,6 +814,7 @@ export async function createVideoMessage(options: {
   return prisma.chatMessage.create({
     data: {
       id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      coupleId: requireCurrentCoupleId(),
       sender: options.sender,
       content: '[视频]',
       messageType: 'video',
@@ -852,6 +859,7 @@ export async function createStickerMessage(options: {
   return prisma.chatMessage.create({
     data: {
       id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      coupleId: requireCurrentCoupleId(),
       sender: options.sender,
       content: '[表情]',
       messageType: 'sticker',

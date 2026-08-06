@@ -1,5 +1,6 @@
 import {
   createHash,
+  createHmac,
   randomBytes,
   randomUUID,
   scryptSync,
@@ -24,6 +25,7 @@ export type LegacyRole = 'female' | 'male';
 export type AccessTokenClaims = {
   sessionId: string;
   deviceId: string;
+  coupleId: string;
   partnerRole: PartnerRole;
   expiresAt: number;
 };
@@ -88,6 +90,27 @@ export function createOpaqueToken() {
   return randomBytes(48).toString('base64url');
 }
 
+/**
+ * Deterministic rotation makes a concurrent retry idempotent: the same current
+ * refresh token always produces the same successor. The session id provides
+ * domain separation between devices, while the HMAC keeps successors
+ * unpredictable without the current token and the server secret.
+ */
+export function createNextRefreshToken(
+  sessionId: string,
+  currentRefreshToken: string,
+) {
+  if (!sessionId || !currentRefreshToken) {
+    throw new Error('刷新令牌派生参数无效');
+  }
+  return createHmac('sha384', getTokenSecret())
+    .update('pairnest-refresh-v1\0')
+    .update(sessionId)
+    .update('\0')
+    .update(currentRefreshToken)
+    .digest('base64url');
+}
+
 export function createSessionId() {
   return randomUUID();
 }
@@ -95,11 +118,13 @@ export function createSessionId() {
 export function createAccessToken(
   sessionId: string,
   deviceId: string,
+  coupleId: string,
   partnerRole: PartnerRole,
 ) {
   const token = jwt.sign(
     {
       deviceId,
+      coupleId,
       partnerRole,
       type: 'access',
     },
@@ -132,6 +157,7 @@ export function verifyAccessToken(token: string): AccessTokenClaims {
       payload.type !== 'access' ||
       typeof payload.sub !== 'string' ||
       typeof payload.deviceId !== 'string' ||
+      typeof payload.coupleId !== 'string' ||
       !normalizePartnerRole(payload.partnerRole) ||
       typeof payload.exp !== 'number'
     ) {
@@ -141,6 +167,7 @@ export function verifyAccessToken(token: string): AccessTokenClaims {
     return {
       sessionId: payload.sub,
       deviceId: payload.deviceId,
+      coupleId: payload.coupleId,
       partnerRole: payload.partnerRole as PartnerRole,
       expiresAt: payload.exp,
     };
@@ -162,6 +189,7 @@ export async function authenticateAccessToken(token: string) {
   if (
     !session ||
     session.deviceId !== claims.deviceId ||
+    session.coupleId !== claims.coupleId ||
     session.partnerRole !== claims.partnerRole ||
     session.revokedAt
   ) {
@@ -193,40 +221,4 @@ function optionalString(value: unknown, maxLength: number) {
 
 export async function ensureAuthConfig() {
   getTokenSecret();
-
-  const configuredSecret = process.env.PAIRNEST_APP_SHARED_SECRET?.trim();
-  const configuredMax = Number(process.env.PAIRNEST_AUTH_MAX_ACTIVATIONS || 2);
-  const maxActivations =
-    Number.isInteger(configuredMax) && configuredMax > 0 ? configuredMax : 2;
-
-  const existing = await prisma.authConfig.findUnique({ where: { id: 1 } });
-  if (!existing) {
-    if (!configuredSecret) {
-      throw new Error(
-        '首次启动必须配置 PAIRNEST_APP_SHARED_SECRET，服务端会将其哈希写入 AuthConfig',
-      );
-    }
-    await prisma.authConfig.create({
-      data: {
-        id: 1,
-        secretHash: hashSharedSecret(configuredSecret),
-        maxActivations,
-      },
-    });
-    return;
-  }
-
-  const updates: { secretHash?: string; maxActivations?: number } = {};
-  if (configuredSecret && !verifySharedSecret(configuredSecret, existing.secretHash)) {
-    updates.secretHash = hashSharedSecret(configuredSecret);
-  }
-  if (
-    process.env.PAIRNEST_AUTH_MAX_ACTIVATIONS &&
-    existing.maxActivations !== maxActivations
-  ) {
-    updates.maxActivations = maxActivations;
-  }
-  if (Object.keys(updates).length > 0) {
-    await prisma.authConfig.update({ where: { id: 1 }, data: updates });
-  }
 }

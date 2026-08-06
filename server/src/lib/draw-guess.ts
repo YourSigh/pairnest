@@ -3,6 +3,7 @@ import { randomInt, randomUUID } from "crypto";
 
 import { prisma } from "../db";
 import { isChatRole, type ChatRole } from "./chat";
+import { requireCurrentCoupleId } from "./tenant-context";
 import {
   DRAW_GUESS_CATEGORIES,
   DRAW_GUESS_WORDS,
@@ -498,6 +499,7 @@ export function prepareDrawGuessRound(
     const round = await prisma.drawGuessRound.create({
       data: {
         id: `draw-guess-${randomUUID()}`,
+        coupleId: requireCurrentCoupleId(),
         roundNumber: (aggregate._max.roundNumber ?? 0) + 1,
         status: "choosing",
         drawerRole,
@@ -606,6 +608,7 @@ export function submitDrawGuessGuess(
     const createAttempt = prisma.drawGuessAttempt.create({
       data: {
         id: `draw-guess-attempt-${randomUUID()}`,
+        coupleId: requireCurrentCoupleId(),
         roundId,
         role,
         content,

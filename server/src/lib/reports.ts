@@ -1,5 +1,6 @@
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { prisma } from '../db';
+import { requireCurrentCoupleId } from './tenant-context';
 import { isAiConfigured, runChatCompletion } from './ai';
 import type { ChatRole } from './chat';
 
@@ -485,6 +486,7 @@ async function generate(options: {
   refresh: boolean;
 }) {
   const { type, period, role, refresh } = options;
+  const coupleId = requireCurrentCoupleId();
   const currentPeriod = getCurrentPeriod(type);
   if (period > currentPeriod) throw new Error('还不能生成未来的报告');
   const isCurrentPeriod = period === currentPeriod;
@@ -492,7 +494,14 @@ async function generate(options: {
 
   if (!shouldRefresh) {
     const cached = await prisma.memoryReport.findUnique({
-      where: { reportType_periodKey_viewerRole: { reportType: type, periodKey: period, viewerRole: role } },
+      where: {
+        coupleId_reportType_periodKey_viewerRole: {
+          coupleId,
+          reportType: type,
+          periodKey: period,
+          viewerRole: role,
+        },
+      },
     });
     if (cached) {
       const wasGeneratedBeforePeriodEnded =
@@ -521,9 +530,17 @@ async function generate(options: {
   const statsJson = JSON.stringify(stats);
   const sourceVersion = createHash('sha256').update(statsJson).digest('hex');
   const saved = await prisma.memoryReport.upsert({
-    where: { reportType_periodKey_viewerRole: { reportType: type, periodKey: period, viewerRole: role } },
+    where: {
+      coupleId_reportType_periodKey_viewerRole: {
+        coupleId,
+        reportType: type,
+        periodKey: period,
+        viewerRole: role,
+      },
+    },
     create: {
-      id: `report-${type}-${period}-${role}`,
+      id: `report-${randomUUID()}`,
+      coupleId,
       reportType: type,
       periodKey: period,
       viewerRole: role,
@@ -550,8 +567,9 @@ export async function generateMemoryReport(options: {
   role: ChatRole;
   refresh?: boolean;
 }) {
+  const coupleId = requireCurrentCoupleId();
   const normalizedOptions = { ...options, refresh: Boolean(options.refresh) };
-  const key = `${options.type}:${options.period}:${options.role}`;
+  const key = `${coupleId}:${options.type}:${options.period}:${options.role}`;
   const existing = generationJobs.get(key);
   if (existing) return existing;
   const job = generate(normalizedOptions);

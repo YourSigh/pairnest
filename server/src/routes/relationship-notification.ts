@@ -1,7 +1,7 @@
 import { Router } from "express";
 
 import { prisma } from "../db";
-import { getAuthenticatedRole } from "../middleware/auth";
+import { getAuthenticatedRole, getCoupleId } from "../middleware/auth";
 import { broadcastRelationshipNotification } from "../ws";
 
 export const relationshipNotificationRouter = Router();
@@ -28,6 +28,7 @@ function toDto(item: {
 }
 
 relationshipNotificationRouter.get("/", async (req, res) => {
+  const coupleId = getCoupleId(res);
   const role = getAuthenticatedRole(res);
   if (!role) {
     res.status(400).json({ ok: false, message: "role 必须为 female 或 male" });
@@ -35,13 +36,18 @@ relationshipNotificationRouter.get("/", async (req, res) => {
   }
 
   const [incoming, outgoing] = await Promise.all([
-    prisma.relationshipNotificationCopy.findUnique({ where: { targetRole: role } }),
-    prisma.relationshipNotificationCopy.findUnique({ where: { targetRole: partnerRole(role) } }),
+    prisma.relationshipNotificationCopy.findUnique({
+      where: { coupleId_targetRole: { coupleId, targetRole: role } },
+    }),
+    prisma.relationshipNotificationCopy.findUnique({
+      where: { coupleId_targetRole: { coupleId, targetRole: partnerRole(role) } },
+    }),
   ]);
   res.json({ ok: true, incoming: toDto(incoming), outgoing: toDto(outgoing) });
 });
 
 relationshipNotificationRouter.put("/", async (req, res) => {
+  const coupleId = getCoupleId(res);
   const authorRole = getAuthenticatedRole(res);
   const content = typeof req.body?.content === "string" ? req.body.content.trim() : "";
   if (!authorRole) {
@@ -59,11 +65,11 @@ relationshipNotificationRouter.put("/", async (req, res) => {
 
   const targetRole = partnerRole(authorRole);
   const item = await prisma.relationshipNotificationCopy.upsert({
-    where: { targetRole },
-    create: { targetRole, authorRole, content },
+    where: { coupleId_targetRole: { coupleId, targetRole } },
+    create: { coupleId, targetRole, authorRole, content },
     update: { authorRole, content },
   });
   const dto = toDto(item)!;
-  broadcastRelationshipNotification(dto);
+  broadcastRelationshipNotification(coupleId, dto);
   res.json({ ok: true, item: dto });
 });

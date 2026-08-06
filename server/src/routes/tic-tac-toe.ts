@@ -7,7 +7,7 @@ import {
   TicTacToeError,
   toTicTacToeStateDto,
 } from "../lib/tic-tac-toe";
-import { getAuthenticatedRole } from "../middleware/auth";
+import { getAuthenticatedRole, getCoupleId } from "../middleware/auth";
 import { broadcastTicTacToeState } from "../ws";
 
 export const ticTacToeRouter = Router();
@@ -35,7 +35,7 @@ ticTacToeRouter.post("/ready", async (req, res) => {
   try {
     const game = await setTicTacToeReady(role, req.body.ready);
     const state = toTicTacToeStateDto(game);
-    broadcastTicTacToeState(state);
+    broadcastTicTacToeState(getCoupleId(res), state);
     res.json({ ok: true, state });
   } catch (error) {
     sendGameError(res, error);
@@ -53,7 +53,7 @@ ticTacToeRouter.post("/move", async (req, res) => {
   try {
     const game = await placeTicTacToePiece(role, position);
     const state = toTicTacToeStateDto(game);
-    broadcastTicTacToeState(state);
+    broadcastTicTacToeState(getCoupleId(res), state);
     res.json({ ok: true, state });
   } catch (error) {
     sendGameError(res, error);

@@ -4,18 +4,46 @@ import path from 'path';
 import multer from 'multer';
 import sharp, { type Metadata, type ResizeOptions } from 'sharp';
 
-const MAX_IMAGE_SIZE = 16 * 1024 * 1024;
-const CHAT_IMAGE_MAX_EDGE = Number(
-  process.env.PAIRNEST_CHAT_IMAGE_MAX_EDGE || 1600,
+export const MAX_IMAGE_UPLOAD_BYTES = 16 * 1024 * 1024;
+
+function boundedIntegerEnv(
+  name: string,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+) {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed >= minimum && parsed <= maximum
+    ? parsed
+    : fallback;
+}
+
+const CHAT_IMAGE_MAX_EDGE = boundedIntegerEnv(
+  'PAIRNEST_CHAT_IMAGE_MAX_EDGE',
+  1600,
+  256,
+  8192,
 );
-const CHAT_IMAGE_JPEG_QUALITY = Number(
-  process.env.PAIRNEST_CHAT_IMAGE_JPEG_QUALITY || 80,
+const CHAT_IMAGE_JPEG_QUALITY = boundedIntegerEnv(
+  'PAIRNEST_CHAT_IMAGE_JPEG_QUALITY',
+  80,
+  30,
+  100,
 );
-const CHAT_IMAGE_THUMB_MAX_EDGE = Number(
-  process.env.PAIRNEST_CHAT_IMAGE_THUMB_MAX_EDGE || 360,
+const CHAT_IMAGE_THUMB_MAX_EDGE = boundedIntegerEnv(
+  'PAIRNEST_CHAT_IMAGE_THUMB_MAX_EDGE',
+  360,
+  64,
+  2048,
 );
-const CHAT_IMAGE_THUMB_JPEG_QUALITY = Number(
-  process.env.PAIRNEST_CHAT_IMAGE_THUMB_JPEG_QUALITY || 72,
+const CHAT_IMAGE_THUMB_JPEG_QUALITY = boundedIntegerEnv(
+  'PAIRNEST_CHAT_IMAGE_THUMB_JPEG_QUALITY',
+  72,
+  30,
+  100,
 );
 const UPLOAD_DIR =
   process.env.PAIRNEST_UPLOAD_DIR || path.resolve(process.cwd(), 'uploads');
@@ -59,11 +87,11 @@ function createImageUpload(directory: string) {
       },
     }),
     limits: {
-      fileSize: MAX_IMAGE_SIZE,
+      fileSize: MAX_IMAGE_UPLOAD_BYTES,
       files: 1,
     },
     fileFilter: (_req, file, callback) => {
-      if (file.mimetype.toLowerCase().startsWith('image/')) {
+      if (MIME_EXTENSIONS[file.mimetype.toLowerCase()]) {
         callback(null, true);
         return;
       }
@@ -209,11 +237,7 @@ export async function processChatImageUpload(
   try {
     metadata = await sharp(file.path).metadata();
   } catch {
-    const display = await originalUploadInfo(file, options);
-    return {
-      display,
-      ...(options.preserveOriginal ? { original: display } : {}),
-    };
+    throw new Error('图片文件无法解析或格式不受支持');
   }
 
   const original = await originalUploadInfo(file, options, metadata);

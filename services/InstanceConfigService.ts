@@ -2,13 +2,51 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const STORAGE_KEY = "pairnest.instance.apiBaseUrl";
 const REQUEST_TIMEOUT_MS = 8_000;
-const DEVELOPMENT_DEFAULT_API_URL =
+const BUILD_DEFAULT_API_URL =
   process.env.EXPO_PUBLIC_PAIRNEST_DEFAULT_API_URL?.trim() ?? "";
+const IS_DEVELOPMENT_BUILD =
+  typeof __DEV__ !== "undefined" && __DEV__;
 
 let currentApiBaseUrl: string | null = null;
 let initialization: Promise<string | null> | null = null;
 
 export class InstanceConfigError extends Error {}
+
+function isPrivateDevelopmentHostname(value: string): boolean {
+  const hostname = value
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.$/, "");
+
+  if (
+    hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    hostname.endsWith(".local") ||
+    hostname === "::1" ||
+    /^f[cd][0-9a-f]{0,2}:/.test(hostname) ||
+    /^fe[89ab][0-9a-f]:/.test(hostname)
+  ) {
+    return true;
+  }
+
+  const octets = hostname.split(".").map(Number);
+  if (
+    octets.length !== 4 ||
+    octets.some(
+      (octet) => !Number.isInteger(octet) || octet < 0 || octet > 255,
+    )
+  ) {
+    return false;
+  }
+
+  return (
+    octets[0] === 10 ||
+    octets[0] === 127 ||
+    (octets[0] === 169 && octets[1] === 254) ||
+    (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+    (octets[0] === 192 && octets[1] === 168)
+  );
+}
 
 export function normalizeApiBaseUrl(value: string): string {
   const input = value.trim();
@@ -25,6 +63,16 @@ export function normalizeApiBaseUrl(value: string): string {
 
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     throw new InstanceConfigError("服务地址只支持 HTTP 或 HTTPS");
+  }
+  if (url.protocol === "http:") {
+    if (!IS_DEVELOPMENT_BUILD) {
+      throw new InstanceConfigError("正式版本仅支持 HTTPS 服务地址");
+    }
+    if (!isPrivateDevelopmentHostname(url.hostname)) {
+      throw new InstanceConfigError(
+        "开发环境的 HTTP 地址仅支持 localhost 或私网地址",
+      );
+    }
   }
   if (!url.hostname) {
     throw new InstanceConfigError("服务地址缺少主机名");
@@ -126,7 +174,7 @@ class InstanceConfigServiceImpl {
 
   private async initializeInternal(): Promise<string | null> {
     const stored = await AsyncStorage.getItem(STORAGE_KEY);
-    for (const candidate of [stored, DEVELOPMENT_DEFAULT_API_URL]) {
+    for (const candidate of [stored, BUILD_DEFAULT_API_URL]) {
       if (!candidate) continue;
       try {
         currentApiBaseUrl = normalizeApiBaseUrl(candidate);

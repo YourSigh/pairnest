@@ -8,7 +8,6 @@ RUN npm ci
 
 COPY tsconfig.json ./
 COPY src ./src
-COPY scripts ./scripts
 RUN npm run build
 
 FROM node:20-bookworm AS runtime
@@ -25,7 +24,6 @@ COPY --from=build --chown=node:node /app/package.json /app/package-lock.json ./
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/prisma ./prisma
 COPY --from=build --chown=node:node /app/dist ./dist
-COPY --from=build --chown=node:node /app/scripts ./scripts
 
 RUN mkdir -p /app/uploads \
     && chown -R node:node /app

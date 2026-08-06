@@ -4,6 +4,7 @@ import { randomUUID } from "crypto";
 import { prisma } from "../db";
 import { isAiConfigured, runChatCompletion } from "./ai";
 import { isChatRole, type ChatRole } from "./chat";
+import { requireCurrentCoupleId } from "./tenant-context";
 
 export type TruthOrDareKind = "truth" | "dare";
 export type TruthOrDareStatus =
@@ -69,7 +70,7 @@ type RoundWithQuestions = Prisma.TruthOrDareRoundGetPayload<{
   include: typeof roundInclude;
 }>;
 
-let mutationQueue = Promise.resolve();
+const mutationQueues = new Map<string, Promise<void>>();
 
 export class TruthOrDareError extends Error {
   constructor(
@@ -81,11 +82,19 @@ export class TruthOrDareError extends Error {
 }
 
 function withMutationLock<T>(operation: () => Promise<T>): Promise<T> {
-  const result = mutationQueue.then(operation, operation);
-  mutationQueue = result.then(
+  const coupleId = requireCurrentCoupleId();
+  const previous = mutationQueues.get(coupleId) ?? Promise.resolve();
+  const result = previous.then(operation, operation);
+  const settled = result.then(
     () => undefined,
     () => undefined,
   );
+  mutationQueues.set(coupleId, settled);
+  void settled.then(() => {
+    if (mutationQueues.get(coupleId) === settled) {
+      mutationQueues.delete(coupleId);
+    }
+  });
   return result;
 }
 
@@ -162,8 +171,8 @@ function cleanQuestion(value: string) {
     .replace(/伴侣 A|伴侣 B/g, "对方")
     .replace(/\s+/g, " ")
     .trim();
-  const addressed = cleaned.replace(/^宝宝[\s,，:：]*/, "宝宝，");
-  return addressed.startsWith("宝宝，") ? addressed : `宝宝，${addressed}`;
+  const addressed = cleaned.replace(/^伴侣[\s,，:：]*/, "伴侣，");
+  return addressed.startsWith("伴侣，") ? addressed : `伴侣，${addressed}`;
 }
 
 function parseAiQuestions(content: string): string[] {
@@ -246,10 +255,10 @@ function generationPrompt(options: {
         "角色归属规则最重要，必须严格遵守：",
         `- 唯一需要回答或完成题目的人是：${performerName}（角色 ${options.performerRole}）。`,
         `- 负责抽题和选题、但不需要完成题目的人是：${pickerName}（角色 ${options.pickerRole}）。`,
-        "- 输出中的“宝宝”永远只指需要回答或完成题目的人，绝不能指选题人。",
-        "- 每道题都要像选题人直接对任务对象说话，并且必须以“宝宝，”开头。",
+        "- 输出中的“伴侣”永远只指需要回答或完成题目的人，绝不能指选题人。",
+        "- 每道题都要像选题人直接对任务对象说话，并且必须以“伴侣，”开头。",
         "- 题目正文避免出现固定姓名或性别称呼，不要把任务错误地交给选题人。",
-        `这轮生成的是给宝宝完成的${kindName}题目。`,
+        `这轮生成的是给伴侣完成的${kindName}题目。`,
         `请生成 ${options.count} 道彼此差异明显、自然具体、有趣但尊重边界的${kindName}题。`,
         ...balanceRules,
         ...kindRules,
@@ -264,7 +273,7 @@ function generationPrompt(options: {
         "以下是此前已经生成过的全部题目以及本次已接受的候选，严禁重复：",
         historyText,
         "",
-        `现在为唯一任务对象“宝宝”生成 ${options.count} 道全新的${kindName}题。再次确认：每道都以“宝宝，”开头，题目交给宝宝完成，不是交给选题人。`,
+        `现在为唯一任务对象“伴侣”生成 ${options.count} 道全新的${kindName}题。再次确认：每道都以“伴侣，”开头，题目交给伴侣完成，不是交给选题人。`,
       ].join("\n"),
     },
   ];
@@ -440,6 +449,7 @@ export function startTruthOrDareRound(
     const round = await prisma.truthOrDareRound.create({
       data: {
         id: `truth-or-dare-${randomUUID()}`,
+        coupleId: requireCurrentCoupleId(),
         roundNumber: (aggregate._max.roundNumber ?? 0) + 1,
         status: "selecting",
         kind,
@@ -556,6 +566,7 @@ export function generateTruthOrDareQuestions(
         await tx.truthOrDareQuestion.create({
           data: {
             id: `truth-or-dare-question-${randomUUID()}`,
+            coupleId: requireCurrentCoupleId(),
             roundId,
             batchNumber: latestBatch + 1,
             kind,

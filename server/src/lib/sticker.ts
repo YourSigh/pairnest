@@ -4,7 +4,7 @@ import path from 'path';
 import multer from 'multer';
 import sharp from 'sharp';
 
-const MAX_STICKER_SIZE = 10 * 1024 * 1024;
+export const MAX_STICKER_UPLOAD_BYTES = 10 * 1024 * 1024;
 const UPLOAD_DIR =
   process.env.PAIRNEST_UPLOAD_DIR || path.resolve(process.cwd(), 'uploads');
 const STICKER_DIR = path.join(UPLOAD_DIR, 'chat-stickers');
@@ -42,7 +42,7 @@ export const stickerUpload = multer({
     },
   }),
   limits: {
-    fileSize: MAX_STICKER_SIZE,
+    fileSize: MAX_STICKER_UPLOAD_BYTES,
     files: 1,
   },
   fileFilter: (_req, file, callback) => {

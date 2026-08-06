@@ -106,10 +106,11 @@ function normalizeData(value: unknown): CoupleCheckInData {
 
 export class CoupleCheckInStorage {
   static async getData(): Promise<CoupleCheckInData> {
+    const generation = CoupleCacheEpoch.get();
     try {
       const body = await this.requestCloud(PAIRNEST_API.checkIns);
       const data = normalizeData(body.data);
-      await this.saveLocalData(data);
+      await this.saveLocalData(data, generation);
       return data;
     } catch (error) {
       console.error("Error syncing couple check-ins:", error);
@@ -118,10 +119,11 @@ export class CoupleCheckInStorage {
   }
 
   static async getToday(): Promise<string | null> {
+    const generation = CoupleCacheEpoch.get();
     try {
       const body = await this.requestCloud(PAIRNEST_API.checkIns);
       if (body.today) {
-        await this.saveLocalData(normalizeData(body.data));
+        await this.saveLocalData(normalizeData(body.data), generation);
         return body.today;
       }
     } catch (error) {
@@ -144,6 +146,7 @@ export class CoupleCheckInStorage {
     role: CoupleCheckInRole,
     input: { mood: CoupleCheckInMood; message: string },
   ): Promise<CoupleCheckInDay> {
+    const generation = CoupleCacheEpoch.get();
     const body = await this.requestCloud(PAIRNEST_API.checkInsToday, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -167,13 +170,14 @@ export class CoupleCheckInStorage {
       checkedAt: new Date().toISOString(),
     };
     data[date] = day;
-    await this.saveLocalData(data);
+    await this.saveLocalData(data, generation);
     return day;
   }
 
   static async deleteEntry(
     role: CoupleCheckInRole,
   ): Promise<void> {
+    const generation = CoupleCacheEpoch.get();
     const body = await this.requestCloud(PAIRNEST_API.checkInsTodayRole(role), {
       method: "DELETE",
     });
@@ -191,11 +195,14 @@ export class CoupleCheckInStorage {
       data[date] = day;
     }
 
-    await this.saveLocalData(data);
+    await this.saveLocalData(data, generation);
   }
 
-  private static async saveLocalData(data: CoupleCheckInData): Promise<void> {
-    const generation = CoupleCacheEpoch.get();
+  private static async saveLocalData(
+    data: CoupleCheckInData,
+    generation: number,
+  ): Promise<void> {
+    if (!CoupleCacheEpoch.isCurrent(generation)) return;
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeData(data)));
     if (!CoupleCacheEpoch.isCurrent(generation)) {
       await AsyncStorage.removeItem(STORAGE_KEY);

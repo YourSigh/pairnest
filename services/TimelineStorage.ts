@@ -153,10 +153,11 @@ function normalizeNodes(value: unknown): TimelineNode[] {
 
 export class TimelineStorage {
   static async getNodes(): Promise<TimelineNode[]> {
+    const generation = CoupleCacheEpoch.get();
     try {
       const body = await this.requestCloud(PAIRNEST_API.timeline);
       const items = normalizeNodes(body.items);
-      await this.saveLocalNodes(items);
+      await this.saveLocalNodes(items, generation);
       return items;
     } catch (error) {
       console.error("Error syncing timeline:", error);
@@ -175,6 +176,7 @@ export class TimelineStorage {
   }
 
   static async createNode(draft: TimelineDraft): Promise<TimelineNode> {
+    const generation = CoupleCacheEpoch.get();
     const body = await this.requestCloud(PAIRNEST_API.timeline, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -182,7 +184,7 @@ export class TimelineStorage {
     });
     const item = normalizeNode(body.item);
     if (!item) throw new Error("云端没有返回时间线节点");
-    await this.upsertLocalNode(item);
+    await this.upsertLocalNode(item, generation);
     return item;
   }
 
@@ -190,6 +192,7 @@ export class TimelineStorage {
     id: string,
     updates: TimelineUpdate,
   ): Promise<TimelineNode> {
+    const generation = CoupleCacheEpoch.get();
     const body = await this.requestCloud(PAIRNEST_API.timelineNode(id), {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -197,14 +200,18 @@ export class TimelineStorage {
     });
     const item = normalizeNode(body.item);
     if (!item) throw new Error("云端没有返回时间线节点");
-    await this.upsertLocalNode(item);
+    await this.upsertLocalNode(item, generation);
     return item;
   }
 
   static async deleteNode(id: string): Promise<void> {
+    const generation = CoupleCacheEpoch.get();
     await this.requestCloud(PAIRNEST_API.timelineNode(id), { method: "DELETE" });
     const items = await this.getLocalNodes();
-    await this.saveLocalNodes(items.filter((item) => item.id !== id));
+    await this.saveLocalNodes(
+      items.filter((item) => item.id !== id),
+      generation,
+    );
   }
 
   static async uploadNodeImage(
@@ -212,6 +219,7 @@ export class TimelineStorage {
     uri: string,
     options: { width: number; height: number; mimeType?: string | null },
   ): Promise<TimelineNode> {
+    const generation = CoupleCacheEpoch.get();
     const extension = uri.split("?")[0]?.match(/(\.[a-zA-Z0-9]+)$/)?.[1] || ".jpg";
     const normalizedExtension = extension.toLowerCase();
     const mimeType =
@@ -245,17 +253,18 @@ export class TimelineStorage {
     });
     const item = normalizeNode(body.item);
     if (!item) throw new Error("云端没有返回时间线节点");
-    await this.upsertLocalNode(item);
+    await this.upsertLocalNode(item, generation);
     return item;
   }
 
   static async removeNodeImage(id: string): Promise<TimelineNode> {
+    const generation = CoupleCacheEpoch.get();
     const body = await this.requestCloud(PAIRNEST_API.timelineImage(id), {
       method: "DELETE",
     });
     const item = normalizeNode(body.item);
     if (!item) throw new Error("云端没有返回时间线节点");
-    await this.upsertLocalNode(item);
+    await this.upsertLocalNode(item, generation);
     return item;
   }
 
@@ -273,7 +282,7 @@ export class TimelineStorage {
     };
   }
 
-  private static async upsertLocalNode(item: TimelineNode) {
+  private static async upsertLocalNode(item: TimelineNode, generation: number) {
     const items = await this.getLocalNodes();
     const index = items.findIndex((existing) => existing.id === item.id);
     if (index >= 0) {
@@ -281,11 +290,14 @@ export class TimelineStorage {
     } else {
       items.push(item);
     }
-    await this.saveLocalNodes(items);
+    await this.saveLocalNodes(items, generation);
   }
 
-  private static async saveLocalNodes(items: TimelineNode[]): Promise<void> {
-    const generation = CoupleCacheEpoch.get();
+  private static async saveLocalNodes(
+    items: TimelineNode[],
+    generation: number,
+  ): Promise<void> {
+    if (!CoupleCacheEpoch.isCurrent(generation)) return;
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(items));
     if (!CoupleCacheEpoch.isCurrent(generation)) {
       await AsyncStorage.removeItem(STORAGE_KEY);

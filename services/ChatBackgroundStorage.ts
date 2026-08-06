@@ -2,6 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
 
+import { CoupleCacheEpoch } from '@/services/CoupleCacheEpoch';
+
 const STORAGE_KEY = 'chat_background_uri';
 const LEGACY_BACKGROUND_FILE = `${FileSystem.documentDirectory ?? ''}chat-background.jpg`;
 
@@ -39,9 +41,13 @@ export class ChatBackgroundStorage {
   }
 
   static async pickAndSaveBackground(): Promise<string | null> {
+    const generation = CoupleCacheEpoch.get();
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
       throw new Error('需要相册权限才能选择背景图');
+    }
+    if (!CoupleCacheEpoch.isCurrent(generation)) {
+      return null;
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -52,6 +58,9 @@ export class ChatBackgroundStorage {
     });
 
     if (result.canceled || !result.assets[0]) {
+      return null;
+    }
+    if (!CoupleCacheEpoch.isCurrent(generation)) {
       return null;
     }
 
@@ -67,7 +76,18 @@ export class ChatBackgroundStorage {
       to: newFile,
     });
 
+    if (!CoupleCacheEpoch.isCurrent(generation)) {
+      await deleteBackgroundFile(newFile);
+      return null;
+    }
+
     await AsyncStorage.setItem(STORAGE_KEY, newFile);
+    if (!CoupleCacheEpoch.isCurrent(generation)) {
+      await AsyncStorage.removeItem(STORAGE_KEY);
+      await deleteBackgroundFile(newFile);
+      return null;
+    }
+
     await deleteBackgroundFile(previousUri);
     await deleteBackgroundFile(LEGACY_BACKGROUND_FILE);
 

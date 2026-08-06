@@ -65,8 +65,12 @@ async function readLocal(role: ChatRole) {
   }
 }
 
-async function saveLocal(role: ChatRole, data: RelationshipNotificationData) {
-  const generation = CoupleCacheEpoch.get();
+async function saveLocal(
+  role: ChatRole,
+  data: RelationshipNotificationData,
+  generation: number,
+) {
+  if (!CoupleCacheEpoch.isCurrent(generation)) return;
   const key = storageKey(role);
   await AsyncStorage.setItem(key, JSON.stringify(data));
   if (!CoupleCacheEpoch.isCurrent(generation)) {
@@ -85,12 +89,13 @@ async function request(input: RequestInfo | URL, init: RequestInit = {}) {
 
 export const RelationshipNotificationService = {
   async get(role: ChatRole): Promise<RelationshipNotificationData> {
+    const generation = CoupleCacheEpoch.get();
     const url = new URL(PAIRNEST_API.relationshipNotification);
     url.searchParams.set("role", role);
     try {
       const body = await request(url.toString());
       const data = normalizeData(body);
-      await saveLocal(role, data);
+      await saveLocal(role, data, generation);
       return data;
     } catch (error) {
       const local = await readLocal(role);
@@ -108,6 +113,7 @@ export const RelationshipNotificationService = {
   },
 
   async update(role: ChatRole, content: string) {
+    const generation = CoupleCacheEpoch.get();
     const body = await request(PAIRNEST_API.relationshipNotification, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -116,7 +122,7 @@ export const RelationshipNotificationService = {
     const outgoing = normalizeCopy(body.item);
     if (!outgoing) throw new Error("服务端没有返回通知文案");
     const local = await readLocal(role);
-    await saveLocal(role, { ...local, outgoing });
+    await saveLocal(role, { ...local, outgoing }, generation);
     return outgoing;
   },
 };

@@ -132,10 +132,11 @@ function normalizeItems(value: unknown): WishItem[] {
 
 export class WishStorage {
   static async getItems(): Promise<WishItem[]> {
+    const generation = CoupleCacheEpoch.get();
     try {
       const body = await this.requestCloud(PAIRNEST_API.wishes);
       const items = normalizeItems(body.items);
-      await this.saveLocalItems(items);
+      await this.saveLocalItems(items, generation);
       return items;
     } catch (error) {
       console.error("Error syncing wishes:", error);
@@ -154,6 +155,7 @@ export class WishStorage {
   }
 
   static async createWish(draft: WishDraft): Promise<WishItem> {
+    const generation = CoupleCacheEpoch.get();
     const body = await this.requestCloud(PAIRNEST_API.wishes, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -161,11 +163,12 @@ export class WishStorage {
     });
     const item = normalizeWish(body.item);
     if (!item) throw new Error("云端没有返回心愿");
-    await this.upsertLocalItem(item);
+    await this.upsertLocalItem(item, generation);
     return item;
   }
 
   static async updateWish(id: string, updates: WishUpdate): Promise<WishItem> {
+    const generation = CoupleCacheEpoch.get();
     const body = await this.requestCloud(PAIRNEST_API.wish(id), {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -173,18 +176,22 @@ export class WishStorage {
     });
     const item = normalizeWish(body.item);
     if (!item) throw new Error("云端没有返回心愿");
-    await this.upsertLocalItem(item);
+    await this.upsertLocalItem(item, generation);
     return item;
   }
 
   static async deleteWish(id: string, actorRole: ChatRole): Promise<void> {
+    const generation = CoupleCacheEpoch.get();
     const url = `${PAIRNEST_API.wish(id)}?actorRole=${encodeURIComponent(actorRole)}`;
     await this.requestCloud(url, { method: "DELETE" });
     const items = await this.getLocalItems();
-    await this.saveLocalItems(items.filter((item) => item.id !== id));
+    await this.saveLocalItems(
+      items.filter((item) => item.id !== id),
+      generation,
+    );
   }
 
-  private static async upsertLocalItem(item: WishItem) {
+  private static async upsertLocalItem(item: WishItem, generation: number) {
     const items = await this.getLocalItems();
     const index = items.findIndex((existing) => existing.id === item.id);
     if (index >= 0) {
@@ -192,11 +199,14 @@ export class WishStorage {
     } else {
       items.unshift(item);
     }
-    await this.saveLocalItems(items);
+    await this.saveLocalItems(items, generation);
   }
 
-  private static async saveLocalItems(items: WishItem[]): Promise<void> {
-    const generation = CoupleCacheEpoch.get();
+  private static async saveLocalItems(
+    items: WishItem[],
+    generation: number,
+  ): Promise<void> {
+    if (!CoupleCacheEpoch.isCurrent(generation)) return;
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(items));
     if (!CoupleCacheEpoch.isCurrent(generation)) {
       await AsyncStorage.removeItem(STORAGE_KEY);

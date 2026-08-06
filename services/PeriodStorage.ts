@@ -110,10 +110,13 @@ function createLocalPeriodId() {
 export class PeriodStorage {
   private static syncPromise: Promise<PeriodData> | null = null;
   private static syncGeneration = 0;
+  /** After a couple switch, skip dirty local uploads for that epoch. */
+  private static suppressLocalUploadForGeneration: number | null = null;
 
   static clearMemoryCache() {
     this.syncPromise = null;
     this.syncGeneration = CoupleCacheEpoch.get();
+    this.suppressLocalUploadForGeneration = CoupleCacheEpoch.get();
   }
 
   static async getData(): Promise<PeriodData> {
@@ -122,47 +125,64 @@ export class PeriodStorage {
     if (!CoupleCacheEpoch.isCurrent(generation)) {
       return normalizeData(null);
     }
+    const suppressLocalUpload =
+      this.suppressLocalUploadForGeneration === generation;
     const shouldUploadLocal =
-      local.hasStoredData && (!(await this.isCloudMigrated()) || (await this.isDirty()));
+      !suppressLocalUpload &&
+      local.hasStoredData &&
+      (!(await this.isCloudMigrated()) || (await this.isDirty()));
 
     try {
       if (!CoupleCacheEpoch.isCurrent(generation)) {
         return normalizeData(null);
       }
-      return shouldUploadLocal
-        ? await this.syncLocalToCloud(local.data, generation)
-        : await this.fetchCloudData(generation);
+      if (shouldUploadLocal) {
+        return await this.syncLocalToCloud(local.data, generation);
+      }
+      const cloud = await this.fetchCloudData(generation);
+      if (this.suppressLocalUploadForGeneration === generation) {
+        this.suppressLocalUploadForGeneration = null;
+      }
+      return cloud;
     } catch (error) {
       if (error instanceof PeriodStaleCacheError) {
         return normalizeData(null);
       }
       console.error("Error syncing period data:", error);
-      return CoupleCacheEpoch.isCurrent(generation) ? local.data : normalizeData(null);
+      return CoupleCacheEpoch.isCurrent(generation) && !suppressLocalUpload
+        ? local.data
+        : normalizeData(null);
     }
   }
 
   static async saveData(data: PeriodData): Promise<void> {
-    await this.saveLocalData(data);
+    const generation = CoupleCacheEpoch.get();
+    await this.saveLocalData(data, false, generation);
   }
 
   static async startPeriod(date: string): Promise<PeriodRecord> {
+    const generation = CoupleCacheEpoch.get();
     const data = await this.getData();
+    this.assertCurrent(generation);
     this.ensureCanAddRecord(data, date, undefined);
 
     try {
       const record = await this.createCloudRecord(date, undefined);
-      await this.fetchCloudData();
+      this.assertCurrent(generation);
+      await this.fetchCloudData(generation);
       return record;
     } catch (error) {
       if (!this.canUseLocalFallback(error)) throw error;
       const record = this.addRecordToData(data, date, undefined);
-      await this.saveLocalData(data, true);
+      await this.saveLocalData(data, true, generation);
       return record;
     }
   }
 
   static async endPeriod(date: string): Promise<PeriodRecord> {
+    const generation = CoupleCacheEpoch.get();
     const data = await this.getData();
+    this.assertCurrent(generation);
     const active = data.records.find((r) => !r.endDate);
     if (!active) {
       throw new Error("没有进行中的记录");
@@ -173,28 +193,32 @@ export class PeriodStorage {
 
     try {
       const record = await this.patchCloudRecord(active.id, { endDate: date });
-      await this.fetchCloudData();
+      this.assertCurrent(generation);
+      await this.fetchCloudData(generation);
       return record;
     } catch (error) {
       if (!this.canUseLocalFallback(error)) throw error;
       active.endDate = date;
-      await this.saveLocalData(data, true);
+      await this.saveLocalData(data, true, generation);
       return active;
     }
   }
 
   static async addRecord(startDate: string, endDate?: string): Promise<PeriodRecord> {
+    const generation = CoupleCacheEpoch.get();
     const data = await this.getData();
+    this.assertCurrent(generation);
     this.ensureCanAddRecord(data, startDate, endDate);
 
     try {
       const record = await this.createCloudRecord(startDate, endDate);
-      await this.fetchCloudData();
+      this.assertCurrent(generation);
+      await this.fetchCloudData(generation);
       return record;
     } catch (error) {
       if (!this.canUseLocalFallback(error)) throw error;
       const record = this.addRecordToData(data, startDate, endDate);
-      await this.saveLocalData(data, true);
+      await this.saveLocalData(data, true, generation);
       return record;
     }
   }
@@ -203,40 +227,48 @@ export class PeriodStorage {
     id: string,
     updates: { startDate?: string; endDate?: string | null },
   ): Promise<void> {
+    const generation = CoupleCacheEpoch.get();
     const data = await this.getData();
+    this.assertCurrent(generation);
     this.applyRecordUpdates(data, id, updates);
 
     try {
       await this.patchCloudRecord(id, updates);
-      await this.fetchCloudData();
+      this.assertCurrent(generation);
+      await this.fetchCloudData(generation);
     } catch (error) {
       if (!this.canUseLocalFallback(error)) throw error;
-      await this.saveLocalData(data, true);
+      await this.saveLocalData(data, true, generation);
     }
   }
 
   static async deleteRecord(id: string): Promise<void> {
+    const generation = CoupleCacheEpoch.get();
     const data = await this.getData();
+    this.assertCurrent(generation);
     data.records = data.records.filter((r) => r.id !== id);
 
     try {
       await this.requestCloud(`${PAIRNEST_API.period}/records/${encodeURIComponent(id)}`, {
         method: "DELETE",
       });
-      await this.fetchCloudData();
+      this.assertCurrent(generation);
+      await this.fetchCloudData(generation);
     } catch (error) {
       if (error instanceof PeriodCloudError && error.status === 404) {
-        await this.saveLocalData(data, false);
+        await this.saveLocalData(data, false, generation);
         return;
       }
       if (!this.canUseLocalFallback(error)) throw error;
-      await this.addDeletedId(id);
-      await this.saveLocalData(data, true);
+      await this.addDeletedId(id, generation);
+      await this.saveLocalData(data, true, generation);
     }
   }
 
   static async updateSettings(settings: Partial<PeriodSettings>): Promise<void> {
+    const generation = CoupleCacheEpoch.get();
     const data = await this.getData();
+    this.assertCurrent(generation);
     data.settings = { ...data.settings, ...settings };
 
     try {
@@ -245,10 +277,11 @@ export class PeriodStorage {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data.settings),
       });
-      await this.fetchCloudData();
+      this.assertCurrent(generation);
+      await this.fetchCloudData(generation);
     } catch (error) {
       if (!this.canUseLocalFallback(error)) throw error;
-      await this.saveLocalData(data, true);
+      await this.saveLocalData(data, true, generation);
     }
   }
 
@@ -256,7 +289,9 @@ export class PeriodStorage {
     date: string,
     updates: Omit<PeriodDailyLog, "date">,
   ): Promise<PeriodDailyLog> {
+    const generation = CoupleCacheEpoch.get();
     const data = await this.getData();
+    this.assertCurrent(generation);
     const dailyLog = normalizeDailyLog({ date, ...updates });
     const existingIndex = data.dailyLogs.findIndex((log) => log.date === date);
     if (existingIndex >= 0) {
@@ -275,11 +310,12 @@ export class PeriodStorage {
           body: JSON.stringify(dailyLog),
         },
       );
-      await this.fetchCloudData();
+      this.assertCurrent(generation);
+      await this.fetchCloudData(generation);
       return body.dailyLog ?? dailyLog;
     } catch (error) {
       if (!this.canUseLocalFallback(error)) throw error;
-      await this.saveLocalData(data, true);
+      await this.saveLocalData(data, true, generation);
       return dailyLog;
     }
   }
@@ -307,7 +343,15 @@ export class PeriodStorage {
     this.assertCurrent(generation);
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeData(data)));
     await AsyncStorage.setItem(DIRTY_KEY, dirty ? "1" : "0");
-    this.assertCurrent(generation);
+    if (!CoupleCacheEpoch.isCurrent(generation)) {
+      await AsyncStorage.multiRemove([
+        STORAGE_KEY,
+        DIRTY_KEY,
+        CLOUD_MIGRATED_KEY,
+        DELETED_IDS_KEY,
+      ]);
+      throw new PeriodStaleCacheError();
+    }
   }
 
   private static async fetchCloudData(
@@ -531,6 +575,15 @@ export class PeriodStorage {
   ) {
     this.assertCurrent(generation);
     await AsyncStorage.setItem(CLOUD_MIGRATED_KEY, "1");
+    if (!CoupleCacheEpoch.isCurrent(generation)) {
+      await AsyncStorage.multiRemove([
+        STORAGE_KEY,
+        DIRTY_KEY,
+        CLOUD_MIGRATED_KEY,
+        DELETED_IDS_KEY,
+      ]);
+      throw new PeriodStaleCacheError();
+    }
   }
 
   private static async getDeletedIds() {
@@ -550,7 +603,10 @@ export class PeriodStorage {
     const ids = new Set(await this.getDeletedIds());
     ids.add(id);
     await AsyncStorage.setItem(DELETED_IDS_KEY, JSON.stringify([...ids]));
-    this.assertCurrent(generation);
+    if (!CoupleCacheEpoch.isCurrent(generation)) {
+      await AsyncStorage.removeItem(DELETED_IDS_KEY);
+      throw new PeriodStaleCacheError();
+    }
   }
 
   private static async clearDeletedIds(

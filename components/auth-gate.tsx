@@ -30,12 +30,12 @@ const PARTNER_OPTIONS: {
   {
     value: "partnerA",
     label: "伴侣 A",
-    description: "绑定后不可修改",
+    description: "可编辑经期记录；绑定后不可修改",
   },
   {
     value: "partnerB",
     label: "伴侣 B",
-    description: "绑定后不可修改",
+    description: "经期记录只读；绑定后不可修改",
   },
 ];
 

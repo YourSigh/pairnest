@@ -534,17 +534,21 @@ class ChatServiceImpl {
     }
 
     const requestUrl = url.toString();
+    const generation = CoupleCacheEpoch.get();
     const existingRequest = this.messageFetches.get(requestUrl);
     if (existingRequest) return existingRequest;
 
     const request = (async () => {
       const response = await AuthService.fetch(requestUrl);
+      if (!CoupleCacheEpoch.isCurrent(generation)) {
+        throw new Error('情侣空间已切换，已取消消息加载');
+      }
       const data = await response.json();
       if (!response.ok || !data.ok) {
         throw new Error(data.message || '加载消息失败');
       }
       const page = pageFromResponse(data);
-      return {
+      const hydrated = {
         ...page,
         // 兼容尚未返回 hasMore 的旧服务端；多请求一页即可最终收敛为 false。
         hasMore:
@@ -553,6 +557,10 @@ class ChatServiceImpl {
             : page.items.length >= limit,
         items: await this.hydrateGachaShareMessages(page.items),
       };
+      if (!CoupleCacheEpoch.isCurrent(generation)) {
+        throw new Error('情侣空间已切换，已取消消息加载');
+      }
+      return hydrated;
     })();
     this.messageFetches.set(requestUrl, request);
     try {
@@ -703,13 +711,20 @@ class ChatServiceImpl {
     const existingRequest = this.unreadCountFetches.get(role);
     if (existingRequest) return existingRequest;
 
+    const generation = CoupleCacheEpoch.get();
     const url = new URL(PAIRNEST_API.messageUnreadCount);
     url.searchParams.set('role', role);
     const request = (async () => {
       const response = await AuthService.fetch(url.toString());
+      if (!CoupleCacheEpoch.isCurrent(generation)) {
+        throw new Error('情侣空间已切换，已取消未读数加载');
+      }
       const data = await response.json();
       if (!response.ok || !data.ok) {
         throw new Error(data.message || '加载未读消息数失败');
+      }
+      if (!CoupleCacheEpoch.isCurrent(generation)) {
+        throw new Error('情侣空间已切换，已取消未读数加载');
       }
       return Number.isInteger(data.count) && data.count > 0 ? data.count : 0;
     })();
@@ -1322,6 +1337,9 @@ class ChatServiceImpl {
   }
 
   async clearCoupleScopedCaches() {
+    this.disconnect();
+    this.messageFetches.clear();
+    this.unreadCountFetches.clear();
     this.mediaDownloads.clear();
     if (!FileSystem.cacheDirectory) return;
 
@@ -1335,7 +1353,7 @@ class ChatServiceImpl {
     ).catch(() => [] as string[]);
     await Promise.all(
       names
-        .filter((name) => name.startsWith('voice-'))
+        .filter((name) => name.startsWith('voice-') || name.startsWith('chat-image-'))
         .map((name) =>
           FileSystem.deleteAsync(`${FileSystem.cacheDirectory}${name}`, {
             idempotent: true,

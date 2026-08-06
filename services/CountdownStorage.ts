@@ -257,6 +257,7 @@ export class CountdownStorage {
   private static async getEventsForRole(
     role: ChatRole,
   ): Promise<CountdownEvent[]> {
+    const generation = CoupleCacheEpoch.get();
     const local = await this.getLocalData(role);
 
     try {
@@ -264,7 +265,7 @@ export class CountdownStorage {
       const merged = refreshEventDays(
         mergeLocalNotificationIds(cloudEvents, local.events),
       );
-      await this.saveEvents(merged, role);
+      await this.saveEvents(merged, role, generation);
       return merged;
     } catch (error) {
       console.error("Error fetching countdown events:", error);
@@ -280,10 +281,12 @@ export class CountdownStorage {
   static async saveEvents(
     events: CountdownEvent[],
     role?: ChatRole,
+    generation = CoupleCacheEpoch.get(),
   ): Promise<void> {
     try {
-      const generation = CoupleCacheEpoch.get();
+      if (!CoupleCacheEpoch.isCurrent(generation)) return;
       const cacheRole = role ?? (await RoleStorage.getRole());
+      if (!CoupleCacheEpoch.isCurrent(generation)) return;
       const key = getStorageKey(cacheRole);
       await AsyncStorage.setItem(
         key,

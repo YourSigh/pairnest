@@ -592,10 +592,11 @@ class AuthServiceImpl {
     if (!response.ok) {
       throw parseErrorResponse(response, body);
     }
-    // Older servers omit the field; default to allowing create.
-    const openCoupleCreate =
-      !isRecord(body) || body.openCoupleCreate !== false;
-    return { openCoupleCreate };
+    // Older servers omit the field; treat explicit false as disabled, odd bodies as closed.
+    if (!isRecord(body) || body.ok !== true) {
+      return { openCoupleCreate: false };
+    }
+    return { openCoupleCreate: body.openCoupleCreate !== false };
   }
 
   async getStoredRecoveryCode(coupleId: string) {
@@ -926,7 +927,12 @@ class AuthServiceImpl {
   private async acceptTokens(tokens: TokenResponse) {
     const previousCoupleId =
       this.boundCoupleId ?? (await getStoredItem(BOUND_COUPLE_ID_KEY));
-    if (previousCoupleId && previousCoupleId !== tokens.coupleId) {
+    const coupleChanged =
+      !previousCoupleId || previousCoupleId !== tokens.coupleId;
+    if (coupleChanged) {
+      // Drop the previous couple's credentials before clearing local caches so
+      // in-flight writers cannot authorize or persist under the new epoch.
+      this.invalidateAccessToken();
       await CoupleLocalCache.clearCoupleScopedData();
     }
 

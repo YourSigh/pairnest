@@ -180,7 +180,9 @@ spending limits.
 
 An unpaired space is deleted immediately on request. A paired space requires
 confirmation by the other member, or a second confirmation by the requester
-after seven days. Database rows and recorded media are removed, and its active
+after seven days. Database rows are removed immediately; recorded media is
+queued for asynchronous cleanup (`mediaCleanupPending` may be true until the
+job finishes, with failed jobs dead-lettered after repeated attempts). Active
 WebSockets are disconnected. Independent backups and third-party provider data
 must be handled separately. See [Privacy](privacy.md).
 

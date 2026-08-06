@@ -31,6 +31,7 @@ import { PetNewcomerGuide } from "@/components/pet-newcomer-guide";
 import { PetPostOffice } from "@/components/pet-post-office";
 import { PetRoomEditor } from "@/components/pet-room-editor";
 import { ThemedText } from "@/components/themed-text";
+import { CHAT_ROLE_LABELS } from "@/constants/chat";
 import { PetTheme } from "@/constants/pet-theme";
 import { useAppActive } from "@/hooks/use-app-active";
 import {
@@ -667,12 +668,16 @@ export default function PetScreen() {
                 <View style={styles.duoRoles}>
                   <View style={[styles.rolePill, pet.duo.femaleDone && styles.roleDoneFemale]}>
                     <Ionicons name={pet.duo.femaleDone ? "checkmark-circle" : "ellipse-outline"} size={16} color={pet.duo.femaleDone ? PetTheme.femaleDone : "#B9A7AD"} />
-                    <ThemedText style={styles.roleText}>她的陪伴</ThemedText>
+                    <ThemedText style={styles.roleText}>
+                      {CHAT_ROLE_LABELS.female}的陪伴
+                    </ThemedText>
                   </View>
                   <View style={styles.duoLine} />
                   <View style={[styles.rolePill, pet.duo.maleDone && styles.roleDoneMale]}>
                     <Ionicons name={pet.duo.maleDone ? "checkmark-circle" : "ellipse-outline"} size={16} color={pet.duo.maleDone ? PetTheme.maleDone : "#B9A7AD"} />
-                    <ThemedText style={styles.roleText}>他的陪伴</ThemedText>
+                    <ThemedText style={styles.roleText}>
+                      {CHAT_ROLE_LABELS.male}的陪伴
+                    </ThemedText>
                   </View>
                 </View>
               </View>
@@ -774,7 +779,9 @@ export default function PetScreen() {
                         { backgroundColor: activity.role === "female" ? "#F2B5C5" : "#ACC9E8" },
                       ]}>
                         <ThemedText style={styles.avatarText}>
-                          {activity.role === "female" ? "她" : "他"}
+                          {activity.role === "female"
+                            ? CHAT_ROLE_LABELS.female
+                            : CHAT_ROLE_LABELS.male}
                         </ThemedText>
                       </View>
                       <View style={styles.activityCopy}>

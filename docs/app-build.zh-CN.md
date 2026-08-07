@@ -80,6 +80,22 @@ eas build:configure
 构建要求使用 HTTPS PairNest 地址；只有开发构建在 localhost 或私有网络测试时才接受
 明文 HTTP。
 
+EAS 云构建应把公开地址配置到对应的 EAS environment；当前 `production` profile 使用
+`production` 环境：
+
+```bash
+eas env:create \
+  --environment production \
+  --name EXPO_PUBLIC_PAIRNEST_DEFAULT_API_URL \
+  --value https://pairnest.example.com \
+  --visibility plaintext
+eas env:list --environment production
+```
+
+如果变量已经存在，使用 `eas env:update` 更新。直接在本机执行 Expo 或 EAS local build
+时，也可以在被 Git 忽略的 `.env` 中设置同名变量。该地址本身不是秘密；服务端数据库
+密码、JWT 密钥和 AI Key 绝不能配置为 `EXPO_PUBLIC_*`。
+
 实例地址本身不是认证密钥。用户仍需创建情侣空间，或输入伴侣提供的 26 字符邀请加入。
 绝对不要把邀请密钥或恢复密钥写进任何 `EXPO_PUBLIC_*` 变量。
 
@@ -195,3 +211,4 @@ Expo 官方参考：
 - <https://docs.expo.dev/build/setup/>
 - <https://docs.expo.dev/build-reference/apk/>
 - <https://docs.expo.dev/build-reference/local-builds/>
+- <https://docs.expo.dev/eas/environment-variables/manage/>

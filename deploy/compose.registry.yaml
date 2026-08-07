@@ -2,7 +2,7 @@ name: pairnest
 
 services:
   db:
-    image: mysql:8.4
+    image: ${PAIRNEST_MYSQL_IMAGE:-mysql:8.4}
     restart: unless-stopped
     environment:
       MYSQL_DATABASE: ${PAIRNEST_DB_NAME:-pairnest}
@@ -25,10 +25,7 @@ services:
       start_period: 30s
 
   migrate:
-    image: ${PAIRNEST_API_IMAGE:-pairnest-api:0.1-local}
-    build:
-      context: ./server
-      dockerfile: Dockerfile
+    image: ${PAIRNEST_API_IMAGE:?Set PAIRNEST_API_IMAGE in .env}
     restart: "no"
     environment:
       PAIRNEST_DATABASE_URL: mysql://${PAIRNEST_DB_USER:-pairnest}:${PAIRNEST_DB_PASSWORD:?Set PAIRNEST_DB_PASSWORD in .env}@db:3306/${PAIRNEST_DB_NAME:-pairnest}
@@ -43,10 +40,7 @@ services:
         condition: service_healthy
 
   api:
-    image: ${PAIRNEST_API_IMAGE:-pairnest-api:0.1-local}
-    build:
-      context: ./server
-      dockerfile: Dockerfile
+    image: ${PAIRNEST_API_IMAGE:?Set PAIRNEST_API_IMAGE in .env}
     restart: unless-stopped
     init: true
     environment:

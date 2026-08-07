@@ -56,6 +56,10 @@ reverse proxy before making it reachable from the Internet.
 See [Backend deployment](docs/deployment.md) for configuration, persistence,
 limits, backups, updates, and troubleshooting.
 
+For a fresh public cloud server, remote registry images, Nginx/HTTPS, or an
+existing MySQL container, follow
+[Production deployment](docs/production-deployment.md).
+
 ## Pairing, recovery, and deletion
 
 The creator first chooses the female or male role. The server atomically binds

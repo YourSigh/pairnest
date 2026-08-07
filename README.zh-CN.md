@@ -56,7 +56,9 @@ volume 持久化数据库和上传文件。它不会发布镜像、配置域名�
 开放到公网前，需要自行配置 HTTPS 反向代理。
 
 完整配置、数据持久化、限制、备份、更新和故障排查说明见
-[后端部署文档](docs/deployment.zh-CN.md)。
+[后端部署文档](docs/deployment.zh-CN.md)。从一台全新的云服务器开始部署、使用远程镜像
+仓库、配置 Nginx/HTTPS 或复用已有 MySQL，请阅读
+[公网生产部署](docs/production-deployment.zh-CN.md)。
 
 ## 配对、恢复与删除
 

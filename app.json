@@ -10,14 +10,25 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "top.yoursigh.pairnest"
+      "bundleIdentifier": "top.yoursigh.pairnest",
+      "infoPlist": {
+        "NSSpeechRecognitionUsageDescription": "允许使用语音识别，以便将语音消息转换成文字",
+        "NSMicrophoneUsageDescription": "允许使用麦克风，以便录制和识别语音消息"
+      }
     },
     "android": {
       "permissions": [
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING",
         "android.permission.REQUEST_INSTALL_PACKAGES",
-        "android.permission.RECORD_AUDIO"
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
@@ -27,7 +38,7 @@
       "predictiveBackGestureEnabled": false,
       "softwareKeyboardLayoutMode": "resize",
       "package": "top.yoursigh.pairnest",
-      "versionCode": 1
+      "versionCode": 2
     },
     "web": {
       "output": "static",
@@ -109,6 +120,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "1eda1475-9eee-4ac3-8b03-52fec6ab78a4"
+      }
+    },
+    "owner": "yoursigh"
   }
 }

@@ -22,6 +22,8 @@ expo-env.d.ts
 .env
 .env.*
 !.env.example
+!deploy/.env.registry.example
+!deploy/.env.external-db.example
 credentials.json
 credentials/
 *.jks

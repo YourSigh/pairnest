@@ -52,6 +52,22 @@ value is embedded in the client and must never contain a secret. Production
 builds require an HTTPS PairNest URL; plain HTTP is accepted only by
 development builds for localhost or private-network testing.
 
+For an EAS cloud build, configure the public URL in the environment selected by
+the build profile. The checked-in production profile uses `production`:
+
+```bash
+eas env:create \
+  --environment production \
+  --name EXPO_PUBLIC_PAIRNEST_DEFAULT_API_URL \
+  --value https://pairnest.example.com \
+  --visibility plaintext
+eas env:list --environment production
+```
+
+Use `eas env:update` when the variable already exists. A Git-ignored local
+`.env` is suitable for local Expo and local EAS builds, but server credentials,
+JWT secrets, and AI keys must never use an `EXPO_PUBLIC_*` name.
+
 The instance URL is not an authentication secret. Users still create a couple
 space or join with the 26-character invitation shown by their partner. Never
 put an invitation or recovery key in an `EXPO_PUBLIC_*` variable.
@@ -126,3 +142,4 @@ Official Expo references:
 - <https://docs.expo.dev/build/setup/>
 - <https://docs.expo.dev/build-reference/apk/>
 - <https://docs.expo.dev/build-reference/local-builds/>
+- <https://docs.expo.dev/eas/environment-variables/manage/>

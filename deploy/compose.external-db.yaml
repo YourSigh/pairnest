@@ -1,56 +1,27 @@
 name: pairnest
 
 services:
-  db:
-    image: mysql:8.4
-    restart: unless-stopped
-    environment:
-      MYSQL_DATABASE: ${PAIRNEST_DB_NAME:-pairnest}
-      MYSQL_USER: ${PAIRNEST_DB_USER:-pairnest}
-      MYSQL_PASSWORD: ${PAIRNEST_DB_PASSWORD:?Set PAIRNEST_DB_PASSWORD in .env}
-      MYSQL_ROOT_PASSWORD: ${PAIRNEST_DB_ROOT_PASSWORD:?Set PAIRNEST_DB_ROOT_PASSWORD in .env}
-      TZ: ${PAIRNEST_TIMEZONE:-UTC}
-    command:
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
-    volumes:
-      - db-data:/var/lib/mysql
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - mysqladmin ping -h 127.0.0.1 -uroot -p"$${MYSQL_ROOT_PASSWORD}" --silent
-      interval: 10s
-      timeout: 5s
-      retries: 20
-      start_period: 30s
-
   migrate:
-    image: ${PAIRNEST_API_IMAGE:-pairnest-api:0.1-local}
-    build:
-      context: ./server
-      dockerfile: Dockerfile
+    image: ${PAIRNEST_API_IMAGE:?Set PAIRNEST_API_IMAGE in .env}
     restart: "no"
     environment:
-      PAIRNEST_DATABASE_URL: mysql://${PAIRNEST_DB_USER:-pairnest}:${PAIRNEST_DB_PASSWORD:?Set PAIRNEST_DB_PASSWORD in .env}@db:3306/${PAIRNEST_DB_NAME:-pairnest}
+      PAIRNEST_DATABASE_URL: ${PAIRNEST_DATABASE_URL:?Set PAIRNEST_DATABASE_URL in .env}
       NODE_ENV: production
       TZ: ${PAIRNEST_TIMEZONE:-UTC}
     command:
       - ./node_modules/.bin/prisma
       - migrate
       - deploy
-    depends_on:
-      db:
-        condition: service_healthy
+    networks:
+      - external-db-network
 
   api:
-    image: ${PAIRNEST_API_IMAGE:-pairnest-api:0.1-local}
-    build:
-      context: ./server
-      dockerfile: Dockerfile
+    image: ${PAIRNEST_API_IMAGE:?Set PAIRNEST_API_IMAGE in .env}
+    container_name: pairnest-api
     restart: unless-stopped
     init: true
     environment:
-      PAIRNEST_DATABASE_URL: mysql://${PAIRNEST_DB_USER:-pairnest}:${PAIRNEST_DB_PASSWORD:?Set PAIRNEST_DB_PASSWORD in .env}@db:3306/${PAIRNEST_DB_NAME:-pairnest}
+      PAIRNEST_DATABASE_URL: ${PAIRNEST_DATABASE_URL:?Set PAIRNEST_DATABASE_URL in .env}
       NODE_ENV: production
       PAIRNEST_PORT: "4000"
       PAIRNEST_UPLOAD_DIR: /app/uploads
@@ -95,11 +66,15 @@ services:
       retries: 12
       start_period: 20s
     depends_on:
-      db:
-        condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    networks:
+      - external-db-network
+
+networks:
+  external-db-network:
+    external: true
+    name: ${PAIRNEST_DOCKER_NETWORK:?Set PAIRNEST_DOCKER_NETWORK in .env}
 
 volumes:
-  db-data:
   uploads:

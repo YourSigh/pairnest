@@ -32,8 +32,14 @@ cp .env.example .env
 ```
 
 Set `PAIRNEST_DB_PASSWORD`, `PAIRNEST_DB_ROOT_PASSWORD`, and
-`PAIRNEST_AUTH_TOKEN_SECRET` to independent random values. Then start and
-verify the local stack:
+`PAIRNEST_AUTH_TOKEN_SECRET` to independent random values.
+
+A fresh instance must also set `PAIRNEST_ALLOW_OPEN_COUPLE_CREATE=true` long
+enough to create its first space. A private one-couple instance can disable it
+again after pairing. A public multi-couple instance must leave it enabled and
+add HTTPS, capacity monitoring, and upstream spending limits.
+
+Then start and verify the local stack:
 
 ```bash
 docker compose config --quiet
@@ -52,14 +58,29 @@ limits, backups, updates, and troubleshooting.
 
 ## Pairing, recovery, and deletion
 
-Creating a space returns an invitation with 26 significant characters
-(displayed in groups) and a separate recovery key. An invitation expires after
-24 hours, is consumed after the invited slot joins, and is replaced whenever a
-new invitation is created. Keep the persistent recovery key somewhere private;
-rotating it invalidates the old one.
+The creator first chooses the female or male role. The server atomically binds
+that device, then returns a 26-significant-character invitation that is valid
+only for the opposite role. The invited partner is bound automatically after
+entering it. Invitations expire after 24 hours, are consumed on use, and are
+replaced whenever a new invitation is created. After that role has joined once,
+the other partner cannot issue a replacement takeover invitation.
 
-The server binds a device to Partner A or Partner B and includes that confirmed
-identity in its session and JWT. Logging out revokes the server session and
+The client securely retains unfinished creation or activation state. If the
+server commits but the response is lost to a timeout or network failure, the
+same installation can retry and recover the same result; another device cannot
+replay the consumed invitation. v0.1 has no space list or space switching: one
+installation holds one member identity in one couple space at a time.
+
+Each role has its own recovery key, which can recover only that role. Recovery
+revokes the previous device session; the key remains valid until that member
+explicitly rotates it while signed in. One partner's recovery key can never be
+used to assume the other partner's identity. Rotation requests are persisted
+locally and replayed idempotently after a lost response. Until a rotation is
+confirmed, the client hides the possibly stale old key and blocks sign-out or
+server changes.
+
+The server binds a device to the female (`partnerA`) or male (`partnerB`) role
+and includes that confirmed identity in its session and JWT. Logging out revokes the server session and
 disconnects its WebSocket. A recovery flow can replace a lost or logged-out
 device and revokes the previous session for the recovered slot.
 

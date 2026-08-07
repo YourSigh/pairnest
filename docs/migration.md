@@ -17,8 +17,9 @@ a known-good backup when necessary.
   deletion.
 - Replaces shared client-claimed identity with server-bound Partner A / Partner
   B device sessions and JWT claims.
-- Adds 24-hour invitations, a persistent rotatable recovery key, durable rate
-  limit buckets, per-couple storage quotas, and couple deletion.
+- Adds 24-hour invitations bound to the opposite role, separate recovery keys
+  for the female and male roles, durable rate-limit buckets, per-couple storage
+  quotas, and couple deletion.
 - Removes the server-wide external AI context directory configuration.
 
 The old internal `female` and `male` values in some business-data columns are
@@ -27,7 +28,7 @@ Partner B slots and does not accept those legacy values as identity claims.
 
 ## Fresh installation
 
-The Compose `migrate` service runs both committed migrations with
+The Compose `migrate` service runs all three committed migrations with
 `prisma migrate deploy`. A fresh database contains no placeholder couple; the
 first space is created through the app. See [Deployment](deployment.md).
 
@@ -47,6 +48,24 @@ During migration, all rows from the single-couple layout are assigned to the
 reserved `legacy-default-couple` record. Temporary database defaults are
 removed before the migration completes, so new business writes must provide an
 authenticated tenant context.
+
+An early multi-couple development build issued couple-wide recovery keys and
+could leave ambiguous or takeover-capable invitations. The third migration
+deliberately invalidates those credentials, plus any invitation for an already
+paired or historically bound role. After upgrading, each signed-in member
+should create their own recovery key in Settings. If the opposite role has
+never joined, reissue its invitation; otherwise that member must recover with
+their own key. No chat or other business data is removed by this credential
+reset.
+
+The new creation endpoint binds the creator and issues its session in the same
+request. `/v1/ping` identifies this contract with `pairingProtocolVersion: 2`.
+Upgrade the client and server together: the new client disables space creation
+against a server that does not advertise this version, preventing an old API
+from creating an ownerless space before returning an incompatible response.
+The client-generated `requestId` and one-way replay markers on the device
+session make creation and first join safe to retry after a lost response without
+letting another device reuse the invitation.
 
 ## Legacy shared-secret compatibility
 
@@ -71,12 +90,16 @@ request must supply:
 Use `partnerB` for the second member. This compatibility path works only when
 the legacy `AuthConfig` row and its original secret are available, and
 `PAIRNEST_ALLOW_LEGACY_SHARED_SECRET_ACTIVATE=true` is set. It is protected by
-IP/device failure limits, and the server verifies the stored scrypt hash. Keep
+IP/device failure limits, and the server verifies the stored scrypt hash. The
+shared secret can only bootstrap a role that has never been bound, or replay
+the exact active device already confirmed for that role. Once a role has a
+historical session or member recovery record, a new device must use that
+member's own recovery key and cannot take it over with the shared secret. Keep
 the flag `false` after migration even if `AuthConfig` remains.
 
 The public PairNest app does not embed, publish, or require this old secret.
 Use it only through a trusted one-time migration client or operator-controlled
-request, then establish the normal recovery key flow. Do not add the old secret
+request, then let each member establish their own recovery key. Do not add the old secret
 to `.env.example`, source code, screenshots, shell history, or issue reports.
 
 ## Verification

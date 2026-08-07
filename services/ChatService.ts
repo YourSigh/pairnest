@@ -962,6 +962,7 @@ class ChatServiceImpl {
       onProgress?: (progress: number) => void;
     },
   ): Promise<ChatMessage> {
+    const generation = CoupleCacheEpoch.get();
     const sourceExtension =
       uri.split('?')[0]?.match(/(\.[a-zA-Z0-9]+)$/)?.[1]?.toLowerCase();
     const inferredMimeType = Object.entries(VIDEO_MIME_EXTENSIONS).find(
@@ -1003,13 +1004,22 @@ class ChatServiceImpl {
       '发送视频失败',
       options.onProgress,
     );
+    if (!CoupleCacheEpoch.isCurrent(generation)) {
+      throw new Error('情侣空间已切换，已忽略旧会话的视频上传结果');
+    }
     const item = data.item as ChatMessage;
     if (item.video) {
-      void ChatVideoCache.rememberLocalVideo(item.id, item.video, uri).catch(
-        (error) => {
-          console.warn('Remember sent video failed:', error);
-        },
-      );
+      await ChatVideoCache.rememberLocalVideo(
+        item.id,
+        item.video,
+        uri,
+        generation,
+      ).catch((error) => {
+        console.warn('Remember sent video failed:', error);
+      });
+    }
+    if (!CoupleCacheEpoch.isCurrent(generation)) {
+      throw new Error('情侣空间已切换，已忽略旧会话的视频上传结果');
     }
     this.emitMessage(item);
     return item;
@@ -1352,20 +1362,16 @@ class ChatServiceImpl {
     if (!FileSystem.cacheDirectory) return;
 
     const mediaDir = `${FileSystem.cacheDirectory}chat-media/`;
-    await FileSystem.deleteAsync(mediaDir, { idempotent: true }).catch(
-      () => undefined,
-    );
+    await FileSystem.deleteAsync(mediaDir, { idempotent: true });
 
-    const names = await FileSystem.readDirectoryAsync(
-      FileSystem.cacheDirectory,
-    ).catch(() => [] as string[]);
+    const names = await FileSystem.readDirectoryAsync(FileSystem.cacheDirectory);
     await Promise.all(
       names
         .filter((name) => name.startsWith('voice-') || name.startsWith('chat-image-'))
         .map((name) =>
           FileSystem.deleteAsync(`${FileSystem.cacheDirectory}${name}`, {
             idempotent: true,
-          }).catch(() => undefined),
+          }),
         ),
     );
   }

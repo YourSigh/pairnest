@@ -90,6 +90,36 @@ export function createOpaqueToken() {
   return randomBytes(48).toString('base64url');
 }
 
+function createServerBoundHmac(domain: string, parts: readonly string[]) {
+  if (!domain || parts.some((part) => !part)) {
+    throw new Error('服务端派生参数无效');
+  }
+  const hmac = createHmac('sha512', getTokenSecret());
+  hmac.update(domain);
+  for (const part of parts) {
+    const value = Buffer.from(part, 'utf8');
+    const length = Buffer.allocUnsafe(4);
+    length.writeUInt32BE(value.length);
+    hmac.update(length);
+    hmac.update(value);
+  }
+  return hmac.digest();
+}
+
+export function createServerBoundHash(domain: string, ...parts: string[]) {
+  return createServerBoundHmac(domain, parts).subarray(0, 32).toString('hex');
+}
+
+export function createServerBoundToken(domain: string, ...parts: string[]) {
+  return createServerBoundHmac(domain, parts)
+    .subarray(0, 48)
+    .toString('base64url');
+}
+
+export function createServerBoundBytes(domain: string, ...parts: string[]) {
+  return createServerBoundHmac(domain, parts);
+}
+
 /**
  * Deterministic rotation makes a concurrent retry idempotent: the same current
  * refresh token always produces the same successor. The session id provides

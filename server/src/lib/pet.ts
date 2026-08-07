@@ -4,12 +4,12 @@ export type PetRole = (typeof PET_ROLES)[number];
 export const PET_ACTIONS = {
   feed: { hunger: 24, happiness: 2, cleanliness: -2, energy: 0, xp: 8, cost: 8, message: "喂了一碗香喷喷的狗粮" },
   snack: { hunger: 9, happiness: 10, cleanliness: -1, energy: 0, xp: 6, cost: 5, message: "奖励了一块爱心小饼干" },
-  play: { hunger: -7, happiness: 20, cleanliness: -5, energy: -14, xp: 12, cost: 0, message: "陪团团玩了最爱的飞盘" },
+  play: { hunger: -7, happiness: 20, cleanliness: -5, energy: -14, xp: 12, cost: 0, message: "陪小栖玩了最爱的飞盘" },
   pet: { hunger: 0, happiness: 12, cleanliness: 0, energy: 1, xp: 5, cost: 0, message: "揉了揉毛茸茸的小脑袋" },
-  walk: { hunger: -9, happiness: 17, cleanliness: -9, energy: -18, xp: 15, cost: 0, message: "牵着团团出去散步啦" },
-  bath: { hunger: -2, happiness: -3, cleanliness: 42, energy: -5, xp: 10, cost: 10, message: "给团团洗得香香软软" },
-  sleep: { hunger: -5, happiness: 3, cleanliness: 0, energy: 34, xp: 7, cost: 0, message: "哄团团睡了一个甜甜的觉" },
-  train: { hunger: -6, happiness: 5, cleanliness: -2, energy: -12, xp: 18, cost: 0, message: "教团团学会了一个新动作" },
+  walk: { hunger: -9, happiness: 17, cleanliness: -9, energy: -18, xp: 15, cost: 0, message: "牵着小栖出去散步啦" },
+  bath: { hunger: -2, happiness: -3, cleanliness: 42, energy: -5, xp: 10, cost: 10, message: "给小栖洗得香香软软" },
+  sleep: { hunger: -5, happiness: 3, cleanliness: 0, energy: 34, xp: 7, cost: 0, message: "哄小栖睡了一个甜甜的觉" },
+  train: { hunger: -6, happiness: 5, cleanliness: -2, energy: -12, xp: 18, cost: 0, message: "教小栖学会了一个新动作" },
 } as const;
 
 export type PetAction = keyof typeof PET_ACTIONS;

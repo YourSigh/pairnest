@@ -10,12 +10,15 @@ import {
 import {
   AuthService,
   AuthState,
+  type ActivationResult,
   type CreateCoupleResult,
   type CoupleAuthStatus,
   type CoupleDeletionCommand,
   type CoupleDeletionResult,
   type CoupleInvitation,
+  type PendingPairingAttempt,
   type PairingValidation,
+  type PairingPurpose,
   type RecoveryCodeResult,
   type StoredRecoveryCredential,
 } from "@/services/AuthService";
@@ -24,8 +27,11 @@ import type { PartnerRole } from "@/constants/chat";
 type AuthContextValue = AuthState & {
   configureServer: (serverUrl: string) => Promise<void>;
   clearServer: () => Promise<void>;
-  createCouple: () => Promise<CreateCoupleResult>;
+  createCouple: (partnerRole: PartnerRole) => Promise<CreateCoupleResult>;
   getAuthCapabilities: () => Promise<{ openCoupleCreate: boolean }>;
+  getPendingCoupleCreatePartnerRole: () => Promise<PartnerRole | null>;
+  getPendingPairingAttempt: () => Promise<PendingPairingAttempt | null>;
+  clearPendingPairingAttempt: () => Promise<void>;
   validatePairingCode: (
     pairingCode: string,
   ) => Promise<PairingValidation>;
@@ -33,7 +39,9 @@ type AuthContextValue = AuthState & {
     coupleId: string,
     pairingCode: string,
     partnerRole: PartnerRole,
-  ) => Promise<void>;
+    purpose: PairingPurpose,
+  ) => Promise<ActivationResult>;
+  completePendingAuthentication: () => Promise<void>;
   retry: () => Promise<void>;
   logout: () => Promise<void>;
   getCoupleStatus: () => Promise<CoupleAuthStatus>;
@@ -63,12 +71,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ...state,
       configureServer: (serverUrl) => AuthService.configureServer(serverUrl),
       clearServer: () => AuthService.clearServer(),
-      createCouple: () => AuthService.createCouple(),
+      createCouple: (partnerRole) => AuthService.createCouple(partnerRole),
       getAuthCapabilities: () => AuthService.getAuthCapabilities(),
+      getPendingCoupleCreatePartnerRole: () =>
+        AuthService.getPendingCoupleCreatePartnerRole(),
+      getPendingPairingAttempt: () => AuthService.getPendingPairingAttempt(),
+      clearPendingPairingAttempt: () =>
+        AuthService.clearPendingPairingAttempt(),
       validatePairingCode: (pairingCode) =>
         AuthService.validatePairingCode(pairingCode),
-      activate: (coupleId, pairingCode, partnerRole) =>
-        AuthService.activate(coupleId, pairingCode, partnerRole),
+      activate: (coupleId, pairingCode, partnerRole, purpose) =>
+        AuthService.activate(coupleId, pairingCode, partnerRole, purpose),
+      completePendingAuthentication: () =>
+        AuthService.completePendingAuthentication(),
       retry: () => AuthService.initialize(),
       logout: () => AuthService.logout(),
       getCoupleStatus: () => AuthService.getCoupleStatus(),

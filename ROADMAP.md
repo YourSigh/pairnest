@@ -2,8 +2,8 @@
 
 PairNest v0.1 provides a self-hosted API for multiple independent couples. A
 couple has exactly two server-confirmed member slots, and every business record
-is scoped by `coupleId`. v0.1 also includes expiring invitations, persistent
-recovery keys, revocable device sessions, per-couple storage quotas, and
+is scoped by `coupleId`. v0.1 also includes role-bound invitations, separate
+member recovery keys, revocable device sessions, per-couple storage quotas, and
 couple-level deletion.
 
 This is intentionally a small multi-couple model, not a complete account and
@@ -39,3 +39,5 @@ Potential follow-up priorities:
    instances.
 9. Upgrade Expo and React Native with regression testing to resolve the
    inherited mobile dependency advisory backlog.
+10. Add a conservative orphan-media sweeper for files left behind if the API
+    process stops after upload storage succeeds but before the database commit.

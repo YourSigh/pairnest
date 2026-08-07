@@ -32,27 +32,51 @@ can access every couple's data.
 
 ## Pairing, sessions, and recovery
 
-PairNest uses the neutral technical identities Partner A and Partner B. During
-activation the server binds a device session to one of these slots. The
+PairNest exposes female and male roles, represented internally by `partnerA`
+and `partnerB`. The creator chooses their role first; after the server binds
+that device, it issues an invitation valid only for the opposite role. The
+invited partner cannot choose a different role. The
 confirmed couple and role are carried in the JWT and checked against the live
 session. API routes and WebSocket messages use this authenticated context and
 do not trust a role claimed by a client header, body field, or message.
 
-A new invitation contains 26 random characters, expires after 24 hours, and is
+A new invitation contains 26 cryptographically generated characters, expires after 24 hours, and is
 replaced when another invitation is issued. It is consumed after the target
-slot joins. A separate 26-character recovery key stays valid until it is
-rotated. Only hashes are stored in MySQL, but anyone who obtains a valid
-invitation or recovery key may be able to join or replace a member session.
+slot joins. Once a role has joined, the other partner cannot issue a takeover
+invitation for it. Each role has a separate 26-character recovery key that can replace
+only that role's session. The key stays valid until that member explicitly
+rotates it while signed in. Only hashes are stored in
+MySQL, but anyone who obtains a valid invitation or recovery key may be able to
+join or replace the corresponding member session.
 Share them through a secure channel and do not include them in screenshots,
 logs, source code, issue reports, or backups stored without protection.
 
-Expired invitation hashes are cleared on a six-hour maintenance cycle. An
-open space with no device session is automatically deleted seven days after it
-was created, so an unfinished setup must not be used as permanent storage.
+On mobile platforms, device credentials, refresh tokens, the installation's
+single current member recovery key, and unfinished creation or activation
+confirmation or recovery-key rotation request are kept in the operating system's secure storage. The web build
+can only use browser local
+storage, whose protection depends on the browser and device. To recover when a
+transaction commits but its response is lost, a device session temporarily
+retains one-way lifecycle markers for the creation request or consumed
+invitation. Recovery-key rotation additionally uses a one-way chained marker,
+so the same device can retrieve the same result across ordinary token refreshes.
+These markers cannot replace the device secret; logout, recovery, or rebind
+clears the rotation chain.
+
+Expired invitation hashes are cleared on a six-hour maintenance cycle. A legacy
+unfinished open space with neither a device session nor a member recovery
+record is automatically deleted after seven days, so an ownerless setup must
+not be used as permanent storage.
+
+Recovery revokes the role's previous active sessions and creates a fresh
+session identifier, so an access token issued before logout or recovery cannot
+become valid again. A lost recovery-key rotation response can be replayed by
+the same current session to retrieve the same new key.
 
 Logging out revokes the server session and disconnects its WebSocket. A
-recovery activation revokes the previous active session for the recovered
-slot. Operators should still protect the JWT signing secret and monitor a
+recovery activation revokes the previous active session for the recovered slot
+but does not automatically invalidate a key when the response itself could be
+lost. Operators should still protect the JWT signing secret and monitor a
 public instance for suspicious activity.
 
 ## External data processing
@@ -103,10 +127,10 @@ seven days and confirms again. Deletion removes the couple row, cascaded
 business rows, device sessions, and recorded media files. Active WebSockets
 for those sessions are disconnected.
 
-File removal can fail because of host permissions or storage errors, so an
-operator should monitor API logs and verify the upload volume after a deletion
-failure. Deletion cannot recall data already processed by a third-party AI or
-transcription provider.
+File removal can fail temporarily because of host permissions or storage
+errors. The cleanup job keeps retrying, but an operator should still monitor API
+logs and investigate persistent upload-volume failures. Deletion cannot recall
+data already processed by a third-party AI or transcription provider.
 
 Backups contain the same sensitive data as the live instance. Deleting a
 couple does not remove it from independent database dumps, volume snapshots,

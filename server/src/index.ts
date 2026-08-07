@@ -73,6 +73,7 @@ app.get("/v1/ping", (_req, res) => {
     service: "pairnest-api",
     message: "pong",
     at: new Date().toISOString(),
+    pairingProtocolVersion: 2,
     openCoupleCreate: isOpenCoupleCreateEnabled(),
   });
 });

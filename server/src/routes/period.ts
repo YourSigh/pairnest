@@ -23,7 +23,7 @@ function rejectUnlessPeriodEditor(res: Response) {
   res.status(403).json({
     ok: false,
     code: 'PERIOD_READ_ONLY',
-    message: '仅伴侣 A 可以编辑经期记录',
+    message: '仅女方可以编辑经期记录',
   });
   return true;
 }

@@ -519,7 +519,7 @@ CREATE TABLE `TruthOrDareQuestion` (
 -- CreateTable
 CREATE TABLE `CouplePet` (
     `id` INTEGER NOT NULL DEFAULT 1,
-    `name` VARCHAR(24) NOT NULL DEFAULT '团团',
+    `name` VARCHAR(24) NOT NULL DEFAULT '小栖',
     `species` VARCHAR(24) NOT NULL DEFAULT 'samoyed',
     `level` INTEGER NOT NULL DEFAULT 1,
     `experience` INTEGER NOT NULL DEFAULT 0,

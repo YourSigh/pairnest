@@ -1,5 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from "expo-file-system/legacy";
+import { Image } from "expo-image";
+import { Platform } from "react-native";
 
 import { BackgroundMessageSyncStorage } from "@/services/BackgroundMessageSyncStorage";
 import { CoupleCacheEpoch } from "@/services/CoupleCacheEpoch";
@@ -23,9 +25,43 @@ const COUPLE_SCOPED_KEYS = [
   "pairnest.backgroundMessaging.lastObservedMessageAt",
 ] as const;
 
+type CleanupFailure = {
+  step: string;
+  error: unknown;
+};
+
 async function deleteCacheDirectory(path: string | null) {
   if (!path) return;
-  await FileSystem.deleteAsync(path, { idempotent: true }).catch(() => undefined);
+  await FileSystem.deleteAsync(path, { idempotent: true });
+}
+
+async function clearExpoImageCache(
+  layer: "memory" | "disk",
+  action: () => Promise<boolean>,
+) {
+  const cleared = await action();
+  // expo-image does not implement these methods on Web and returns false.
+  // On native, false means the requested cache was not actually cleared.
+  if (Platform.OS !== "web" && cleared === false) {
+    throw new Error(`expo-image ${layer} cache was not cleared`);
+  }
+}
+
+async function runCleanupStep(
+  step: string,
+  action: () => void | Promise<void> | Promise<boolean>,
+  failures: CleanupFailure[],
+) {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await action();
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  failures.push({ step, error: lastError });
 }
 
 export class CoupleLocalCache {
@@ -39,48 +75,68 @@ export class CoupleLocalCache {
 
   static async clearCoupleScopedData() {
     CoupleCacheEpoch.bump();
-    await AsyncStorage.multiRemove([...COUPLE_SCOPED_KEYS]);
-    BackgroundMessageSyncStorage.clearMemoryCache();
+    const failures: CleanupFailure[] = [];
+    const run = (step: string, action: () => void | Promise<void> | Promise<boolean>) =>
+      runCleanupStep(step, action, failures);
+
+    await run("async-storage", () =>
+      AsyncStorage.multiRemove([...COUPLE_SCOPED_KEYS]),
+    );
+    await run("background-message-memory", () => {
+      BackgroundMessageSyncStorage.clearMemoryCache();
+    });
+
+    // expo-image keeps authenticated relationship media in a shared cache.
+    // Clear both layers whenever the active couple changes or signs out so a
+    // later session cannot recover thumbnails from the previous couple.
+    await run("expo-image-memory", () =>
+      clearExpoImageCache("memory", () => Image.clearMemoryCache()),
+    );
+    await run("expo-image-disk", () =>
+      clearExpoImageCache("disk", () => Image.clearDiskCache()),
+    );
 
     // Lazy requires avoid AuthService ↔ PeriodStorage / Chat* cycles.
-    try {
+    await run("period-memory", () => {
       const { PeriodStorage } =
         require("@/services/PeriodStorage") as typeof import("@/services/PeriodStorage");
       PeriodStorage.clearMemoryCache();
-    } catch {
-      // ignore
-    }
-    try {
+    });
+    await run("chat-background", async () => {
       const { ChatBackgroundStorage } =
         require("@/services/ChatBackgroundStorage") as typeof import("@/services/ChatBackgroundStorage");
       await ChatBackgroundStorage.clearBackground();
-    } catch {
-      // ignore
-    }
-    try {
+    });
+    await run("chat-video", async () => {
       const { ChatVideoCache } =
         require("@/services/ChatVideoCache") as typeof import("@/services/ChatVideoCache");
       await ChatVideoCache.clearAll();
-    } catch {
-      // ignore
-    }
-    try {
+    });
+    await run("chat-stickers", async () => {
       const { ChatStickerService } =
         require("@/services/ChatStickerService") as typeof import("@/services/ChatStickerService");
       await ChatStickerService.clearAll();
-    } catch {
-      // ignore
-    }
-    try {
+    });
+    await run("chat-service", async () => {
       const { ChatService } =
         require("@/services/ChatService") as typeof import("@/services/ChatService");
       await ChatService.clearCoupleScopedCaches();
-    } catch {
-      // ignore
-    }
+    });
 
     if (FileSystem.cacheDirectory) {
-      await deleteCacheDirectory(`${FileSystem.cacheDirectory}chat-media/`);
+      await run("chat-media-directory", () =>
+        deleteCacheDirectory(`${FileSystem.cacheDirectory}chat-media/`),
+      );
+    }
+
+    if (failures.length > 0) {
+      console.warn("[cache] couple-scoped cleanup incomplete", failures);
+      // Do not install credentials for another couple while any old
+      // couple-owned cache may still be readable. The caller can retry the
+      // transition after the transient storage error clears.
+      throw new Error("情侣本地数据未能完全清理，请重试", {
+        cause: failures,
+      });
     }
   }
 }

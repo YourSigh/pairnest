@@ -9,6 +9,10 @@ import {
   timelineImageUpload,
 } from "../lib/image";
 import {
+  enqueueMediaDeletionJob,
+  processMediaDeletionJob,
+} from "../lib/media-deletion";
+import {
   createTimelineNodeId,
   isTimelineMood,
   isValidTimelineDate,
@@ -34,6 +38,33 @@ const MAX_DESCRIPTION_LENGTH = 1600;
 const MAX_LOCATION_LENGTH = 60;
 const MAX_CATEGORY_LENGTH = 24;
 const DEFAULT_CATEGORY = "日常";
+const TIMELINE_MEDIA_MUTATION_ATTEMPTS = 5;
+
+class TimelineMediaConflictError extends Error {}
+
+function processMediaDeletionSoon(jobId: string | null) {
+  if (!jobId) return;
+  void processMediaDeletionJob(jobId).catch((error) => {
+    console.error(
+      `[timeline] media deletion job ${jobId} could not start; it remains queued`,
+      error,
+    );
+  });
+}
+
+async function enqueueTimelineImageDeletion(
+  tx: Prisma.TransactionClient,
+  coupleId: string,
+  fileName: string | null,
+) {
+  return fileName
+    ? enqueueMediaDeletionJob(
+        coupleId,
+        [{ kind: "timeline-image", fileName }],
+        tx,
+      )
+    : null;
+}
 
 function hasOwn(body: unknown, key: string) {
   return Boolean(
@@ -165,6 +196,7 @@ timelineRouter.post(
   timelineImageUpload.single("image"),
   async (req, res) => {
     const nodeId = String(req.params.id);
+    const coupleId = getCoupleId(res);
     const file = req.file;
     const width = Math.round(Number(req.body?.width));
     const height = Math.round(Number(req.body?.height));
@@ -186,42 +218,86 @@ timelineRouter.post(
       return;
     }
 
+    let uploadCommitted = false;
     try {
-      const existing = await prisma.timelineNode.findUnique({
-        where: { id: nodeId },
-      });
-      if (!existing) {
-        await removeUploadedFile();
-        res.status(404).json({ ok: false, message: "时间线节点不存在" });
-        return;
-      }
-      await setUploadStoredBytes(
-        res,
-        Math.max(0, file.size - (existing.imageSize ?? 0)),
-      );
+      let committed:
+        | {
+            item: Awaited<ReturnType<typeof prisma.timelineNode.findUniqueOrThrow>>;
+            deletionJobId: string | null;
+          }
+        | null = null;
 
-      const item = await prisma.timelineNode.update({
-        where: { id: existing.id },
-        data: {
-          imageFileName: file.filename,
-          imageMimeType: file.mimetype || "image/jpeg",
-          imageSize: file.size,
-          imageWidth: width,
-          imageHeight: height,
-        },
-      });
-      if (existing.imageFileName && existing.imageFileName !== file.filename) {
-        await unlink(getTimelineImageFilePath(existing.imageFileName)).catch(
-          () => undefined,
+      for (
+        let attempt = 0;
+        attempt < TIMELINE_MEDIA_MUTATION_ATTEMPTS && !committed;
+        attempt += 1
+      ) {
+        const existing = await prisma.timelineNode.findUnique({
+          where: { id: nodeId },
+        });
+        if (!existing) {
+          await removeUploadedFile();
+          res.status(404).json({ ok: false, message: "时间线节点不存在" });
+          return;
+        }
+        await setUploadStoredBytes(
+          res,
+          Math.max(0, file.size - (existing.imageSize ?? 0)),
+        );
+
+        committed = await prisma.$transaction(async (tx) => {
+          const updated = await tx.timelineNode.updateMany({
+            where: {
+              id: existing.id,
+              coupleId,
+              imageFileName: existing.imageFileName,
+            },
+            data: {
+              imageFileName: file.filename,
+              imageMimeType: file.mimetype || "image/jpeg",
+              imageSize: file.size,
+              imageWidth: width,
+              imageHeight: height,
+            },
+          });
+          if (updated.count !== 1) return null;
+
+          const deletionJobId = await enqueueTimelineImageDeletion(
+            tx,
+            coupleId,
+            existing.imageFileName,
+          );
+          const item = await tx.timelineNode.findUniqueOrThrow({
+            where: { id: existing.id },
+          });
+          return { item, deletionJobId };
+        });
+      }
+
+      if (!committed) {
+        throw new TimelineMediaConflictError(
+          "时间线图片已被其他请求更新，请重试",
         );
       }
-      res.status(201).json({ ok: true, item: toTimelineNodeDto(item) });
+      uploadCommitted = true;
+      processMediaDeletionSoon(committed.deletionJobId);
+      res.status(201).json({ ok: true, item: toTimelineNodeDto(committed.item) });
     } catch (error) {
-      await removeUploadedFile();
-      res.status(error instanceof StorageQuotaExceededError ? 413 : 400).json({
+      if (!uploadCommitted) await removeUploadedFile();
+      const status =
+        error instanceof StorageQuotaExceededError
+          ? 413
+          : error instanceof TimelineMediaConflictError
+            ? 409
+            : 400;
+      res.status(status).json({
         ok: false,
         code:
-          error instanceof StorageQuotaExceededError ? error.code : undefined,
+          error instanceof StorageQuotaExceededError
+            ? error.code
+            : error instanceof TimelineMediaConflictError
+              ? "TIMELINE_MEDIA_CONFLICT"
+              : undefined,
         message: error instanceof Error ? error.message : "上传时间线图片失败",
       });
     }
@@ -260,30 +336,70 @@ timelineRouter.get("/:id/image", async (req, res) => {
 });
 
 timelineRouter.delete("/:id/image", async (req, res) => {
-  const existing = await prisma.timelineNode.findUnique({
-    where: { id: req.params.id },
-  });
-  if (!existing) {
-    res.status(404).json({ ok: false, message: "时间线节点不存在" });
-    return;
+  const coupleId = getCoupleId(res);
+  let committed:
+    | {
+        item: Awaited<ReturnType<typeof prisma.timelineNode.findUniqueOrThrow>>;
+        deletionJobId: string | null;
+      }
+    | null = null;
+
+  for (
+    let attempt = 0;
+    attempt < TIMELINE_MEDIA_MUTATION_ATTEMPTS && !committed;
+    attempt += 1
+  ) {
+    const existing = await prisma.timelineNode.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!existing) {
+      res.status(404).json({ ok: false, message: "时间线节点不存在" });
+      return;
+    }
+    if (!existing.imageFileName) {
+      res.json({ ok: true, item: toTimelineNodeDto(existing) });
+      return;
+    }
+
+    committed = await prisma.$transaction(async (tx) => {
+      const updated = await tx.timelineNode.updateMany({
+        where: {
+          id: existing.id,
+          coupleId,
+          imageFileName: existing.imageFileName,
+        },
+        data: {
+          imageFileName: null,
+          imageMimeType: null,
+          imageSize: null,
+          imageWidth: null,
+          imageHeight: null,
+        },
+      });
+      if (updated.count !== 1) return null;
+
+      const deletionJobId = await enqueueTimelineImageDeletion(
+        tx,
+        coupleId,
+        existing.imageFileName,
+      );
+      const item = await tx.timelineNode.findUniqueOrThrow({
+        where: { id: existing.id },
+      });
+      return { item, deletionJobId };
+    });
   }
 
-  const item = await prisma.timelineNode.update({
-    where: { id: existing.id },
-    data: {
-      imageFileName: null,
-      imageMimeType: null,
-      imageSize: null,
-      imageWidth: null,
-      imageHeight: null,
-    },
-  });
-  if (existing.imageFileName) {
-    await unlink(getTimelineImageFilePath(existing.imageFileName)).catch(
-      () => undefined,
-    );
+  if (!committed) {
+    res.status(409).json({
+      ok: false,
+      code: "TIMELINE_MEDIA_CONFLICT",
+      message: "时间线图片已被其他请求更新，请重试",
+    });
+    return;
   }
-  res.json({ ok: true, item: toTimelineNodeDto(item) });
+  processMediaDeletionSoon(committed.deletionJobId);
+  res.json({ ok: true, item: toTimelineNodeDto(committed.item) });
 });
 
 timelineRouter.patch("/:id", async (req, res) => {
@@ -372,19 +488,51 @@ timelineRouter.patch("/:id", async (req, res) => {
 });
 
 timelineRouter.delete("/:id", async (req, res) => {
-  const existing = await prisma.timelineNode.findUnique({
-    where: { id: req.params.id },
-  });
-  if (!existing) {
-    res.status(404).json({ ok: false, message: "时间线节点不存在" });
-    return;
+  const coupleId = getCoupleId(res);
+  let deletionJobId: string | null | undefined;
+
+  for (
+    let attempt = 0;
+    attempt < TIMELINE_MEDIA_MUTATION_ATTEMPTS && deletionJobId === undefined;
+    attempt += 1
+  ) {
+    const existing = await prisma.timelineNode.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!existing) {
+      res.status(404).json({ ok: false, message: "时间线节点不存在" });
+      return;
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const deleted = await tx.timelineNode.deleteMany({
+        where: {
+          id: existing.id,
+          coupleId,
+          imageFileName: existing.imageFileName,
+        },
+      });
+      if (deleted.count !== 1) return { committed: false as const };
+      return {
+        committed: true as const,
+        deletionJobId: await enqueueTimelineImageDeletion(
+          tx,
+          coupleId,
+          existing.imageFileName,
+        ),
+      };
+    });
+    if (result.committed) deletionJobId = result.deletionJobId;
   }
 
-  await prisma.timelineNode.delete({ where: { id: existing.id } });
-  if (existing.imageFileName) {
-    await unlink(getTimelineImageFilePath(existing.imageFileName)).catch(
-      () => undefined,
-    );
+  if (deletionJobId === undefined) {
+    res.status(409).json({
+      ok: false,
+      code: "TIMELINE_MEDIA_CONFLICT",
+      message: "时间线节点已被其他请求更新，请重试",
+    });
+    return;
   }
+  processMediaDeletionSoon(deletionJobId);
   res.json({ ok: true });
 });

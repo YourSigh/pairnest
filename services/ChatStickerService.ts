@@ -29,6 +29,8 @@ const STICKER_DIRECTORY = FileSystem.documentDirectory
   ? `${FileSystem.documentDirectory}chat-stickers/`
   : null;
 const downloads = new Map<string, Promise<string>>();
+let importSequence = 0;
+let downloadSequence = 0;
 
 function safeSegment(value: string) {
   return value.replace(/[^a-zA-Z0-9._-]/g, "-");
@@ -49,13 +51,13 @@ function mimeTypeForExtension(extension: string) {
   return "image/png";
 }
 
-function localUri(asset: ChatStickerAsset) {
+function localUri(asset: ChatStickerAsset, generation: number) {
   if (!STICKER_DIRECTORY) return null;
-  return `${STICKER_DIRECTORY}${safeSegment(asset.fileName)}-${asset.size}${extensionFromFileName(asset.fileName)}`;
+  return `${STICKER_DIRECTORY}g${generation}-${safeSegment(asset.fileName)}-${asset.size}${extensionFromFileName(asset.fileName)}`;
 }
 
-async function validLocalUri(asset: ChatStickerAsset) {
-  const uri = localUri(asset);
+async function validLocalUri(asset: ChatStickerAsset, generation: number) {
+  const uri = localUri(asset, generation);
   if (!uri) return null;
   const info = await FileSystem.getInfoAsync(uri);
   if (
@@ -74,7 +76,8 @@ async function downloadPersistent(
   asset: ChatStickerAsset,
   remoteUri: string,
 ) {
-  const targetUri = localUri(asset);
+  const generation = CoupleCacheEpoch.get();
+  const targetUri = localUri(asset, generation);
   if (!targetUri || !STICKER_DIRECTORY) {
     return {
       uri: remoteUri,
@@ -83,18 +86,18 @@ async function downloadPersistent(
       },
     };
   }
-  const cached = await validLocalUri(asset);
+  const cached = await validLocalUri(asset, generation);
   if (cached) return { uri: cached };
 
   const existing = downloads.get(targetUri);
   if (existing) return { uri: await existing };
 
   const download = (async () => {
-    const generation = CoupleCacheEpoch.get();
     await FileSystem.makeDirectoryAsync(STICKER_DIRECTORY, {
       intermediates: true,
     });
-    const temporaryUri = `${targetUri}.download`;
+    downloadSequence += 1;
+    const temporaryUri = `${targetUri}.download-${Date.now()}-${downloadSequence}`;
     await FileSystem.deleteAsync(temporaryUri, { idempotent: true });
     try {
       if (!CoupleCacheEpoch.isCurrent(generation)) {
@@ -165,6 +168,7 @@ export const ChatStickerService = {
       mimeType?: string | null;
     },
   ): Promise<ChatSticker> {
+    const generation = CoupleCacheEpoch.get();
     const extension =
       asset.uri.split("?")[0]?.match(/(\.[a-zA-Z0-9]+)$/)?.[1] || ".png";
     const mimeType = asset.mimeType || mimeTypeForExtension(extension);
@@ -187,7 +191,9 @@ export const ChatStickerService = {
       throw new Error(data.message || "添加表情失败");
     }
     const item = data.item as ChatSticker;
-    await this.rememberLocalFile(item, asset.uri).catch(() => undefined);
+    await this.rememberLocalFile(item, asset.uri, generation).catch(
+      () => undefined,
+    );
     return item;
   },
 
@@ -226,17 +232,26 @@ export const ChatStickerService = {
     );
   },
 
-  async rememberLocalFile(asset: ChatStickerAsset, sourceUri: string) {
-    const targetUri = localUri(asset);
+  async rememberLocalFile(
+    asset: ChatStickerAsset,
+    sourceUri: string,
+    generation = CoupleCacheEpoch.get(),
+  ) {
+    const targetUri = localUri(asset, generation);
     if (!targetUri || !STICKER_DIRECTORY) return;
-    if (await validLocalUri(asset)) return;
+    if (!CoupleCacheEpoch.isCurrent(generation)) return;
+    if (await validLocalUri(asset, generation)) return;
+    if (!CoupleCacheEpoch.isCurrent(generation)) return;
     await FileSystem.makeDirectoryAsync(STICKER_DIRECTORY, {
       intermediates: true,
     });
-    const temporaryUri = `${targetUri}.import`;
+    if (!CoupleCacheEpoch.isCurrent(generation)) return;
+    importSequence += 1;
+    const temporaryUri = `${targetUri}.import-${generation}-${importSequence}`;
     await FileSystem.deleteAsync(temporaryUri, { idempotent: true });
     try {
       await FileSystem.copyAsync({ from: sourceUri, to: temporaryUri });
+      if (!CoupleCacheEpoch.isCurrent(generation)) return;
       const info = await FileSystem.getInfoAsync(temporaryUri);
       if (
         !info.exists ||
@@ -244,8 +259,15 @@ export const ChatStickerService = {
       ) {
         throw new Error("本地表情文件不完整");
       }
+      if (!CoupleCacheEpoch.isCurrent(generation)) return;
       await FileSystem.deleteAsync(targetUri, { idempotent: true });
+      if (!CoupleCacheEpoch.isCurrent(generation)) return;
       await FileSystem.moveAsync({ from: temporaryUri, to: targetUri });
+      if (!CoupleCacheEpoch.isCurrent(generation)) {
+        await FileSystem.deleteAsync(targetUri, { idempotent: true }).catch(
+          () => undefined,
+        );
+      }
     } finally {
       await FileSystem.deleteAsync(temporaryUri, { idempotent: true });
     }
@@ -254,9 +276,7 @@ export const ChatStickerService = {
   async clearAll() {
     downloads.clear();
     if (STICKER_DIRECTORY) {
-      await FileSystem.deleteAsync(STICKER_DIRECTORY, { idempotent: true }).catch(
-        () => undefined,
-      );
+      await FileSystem.deleteAsync(STICKER_DIRECTORY, { idempotent: true });
     }
   },
 };

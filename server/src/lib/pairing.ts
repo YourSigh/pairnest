@@ -1,6 +1,10 @@
 import { randomBytes } from "crypto";
 
-import { hashOpaqueToken, tokenHashMatches } from "./auth";
+import {
+  createServerBoundBytes,
+  hashOpaqueToken,
+  tokenHashMatches,
+} from "./auth";
 
 const PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 export const PAIRING_CODE_LENGTH = 26;
@@ -28,6 +32,18 @@ export function formatPairingCode(raw: string) {
 
 export function generatePairingCode() {
   const bytes = randomBytes(PAIRING_CODE_LENGTH);
+  let raw = "";
+  for (let index = 0; index < PAIRING_CODE_LENGTH; index += 1) {
+    raw += PAIRING_ALPHABET[bytes[index] % PAIRING_ALPHABET.length];
+  }
+  return formatPairingCode(raw);
+}
+
+export function createServerBoundPairingCode(
+  domain: string,
+  ...parts: string[]
+) {
+  const bytes = createServerBoundBytes(domain, ...parts);
   let raw = "";
   for (let index = 0; index < PAIRING_CODE_LENGTH; index += 1) {
     raw += PAIRING_ALPHABET[bytes[index] % PAIRING_ALPHABET.length];

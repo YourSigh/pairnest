@@ -119,7 +119,7 @@ function formatAuthDate(value: string) {
 }
 
 function partnerRoleLabel(role: "partnerA" | "partnerB") {
-  return role === "partnerA" ? "伴侣 A" : "伴侣 B";
+  return role === "partnerA" ? "女方" : "男方";
 }
 
 type SettingsPanelProps = {
@@ -505,10 +505,7 @@ export function SettingsPanel({
       const nextInvitation = await auth.createCoupleInvitation();
       setInvitation(nextInvitation);
       toast.show({
-        message:
-          nextInvitation.purpose === "recovery"
-            ? "恢复邀请已生成，24 小时内有效"
-            : "加入邀请已生成，24 小时内有效",
+        message: "加入邀请已生成，24 小时内有效",
         icon: "checkmark-circle",
       });
     } catch (error) {
@@ -544,8 +541,8 @@ export function SettingsPanel({
   const handleRotateRecoveryCode = () => {
     if (recoveryCodeLoading || serverChangeLoading) return;
     AppAlert.alert(
-      "旋转永久恢复密钥",
-      "旋转后旧恢复密钥会立即失效。新密钥只保存在当前设备，请复制并放到安全的位置。",
+      "更新我的恢复密钥",
+      "更新后，当前身份的旧恢复密钥会立即失效。新密钥只保存在当前设备，请复制并放到安全的位置。",
       [
         { text: "取消", style: "cancel" },
         {
@@ -555,6 +552,11 @@ export function SettingsPanel({
             void (async () => {
               try {
                 setRecoveryCodeLoading(true);
+                // Once a rotation request may have reached the server, the
+                // previously displayed key must no longer be presented as
+                // valid. Retrying reuses the persisted idempotency request.
+                setStoredRecoveryCode(null);
+                setRecoveryCodeVisible(false);
                 const result = await auth.rotateRecoveryCode();
                 setStoredRecoveryCode(result.recoveryCode);
                 setRecoveryCodeVisible(true);
@@ -568,9 +570,15 @@ export function SettingsPanel({
                     : "alert-circle",
                 });
               } catch (error) {
+                const detail =
+                  error instanceof Error ? error.message : "旋转恢复密钥失败";
+                const requiresIdentityRecovery =
+                  error instanceof AuthApiError &&
+                  error.code === "RECOVERY_ROTATION_CONFLICT";
                 toast.show({
-                  message:
-                    error instanceof Error ? error.message : "旋转恢复密钥失败",
+                  message: requiresIdentityRecovery
+                    ? detail
+                    : `${detail}；请重试成功后再退出登录`,
                   icon: "alert-circle",
                 });
               } finally {
@@ -1403,21 +1411,28 @@ export function SettingsPanel({
           情侣空间
         </ThemedText>
         <ThemedText style={styles.sectionHint}>
-          邀请另一位伴侣加入，或在换机时恢复原有身份。
+          邀请另一位伴侣首次加入；换机时请使用自己身份的恢复密钥。
         </ThemedText>
         <View style={styles.card}>
           <TouchableOpacity
             style={[styles.actionRow, styles.optionRowBorder]}
             onPress={() => void handleCreateInvitation()}
-            disabled={inviteLoading || deletionLoading}
+            disabled={
+              inviteLoading ||
+              deletionLoading ||
+              !coupleStatus ||
+              coupleStatus.partnerBound
+            }
             activeOpacity={0.7}
           >
             <View style={styles.settingTextWrap}>
               <ThemedText style={styles.optionLabel}>
-                {coupleStatus?.partnerActive ? "生成恢复邀请" : "生成加入邀请"}
+                {coupleStatus?.partnerBound ? "已完成配对" : "生成加入邀请"}
               </ThemedText>
               <ThemedText style={styles.settingStatus}>
-                新邀请会使之前尚未使用的邀请失效，有效期 24 小时
+                {coupleStatus?.partnerBound
+                  ? "双方身份已经绑定；任何一方换机时只能恢复自己的身份"
+                  : "新邀请会使之前尚未使用的邀请失效，有效期 24 小时"}
               </ThemedText>
             </View>
             {inviteLoading ? (
@@ -1430,17 +1445,13 @@ export function SettingsPanel({
           {invitation ? (
             <View style={[styles.invitationBlock, styles.optionRowBorder]}>
               <ThemedText style={styles.invitationTitle}>
-                {invitation.purpose === "recovery" ? "恢复邀请" : "加入邀请"}
-                {` · ${partnerRoleLabel(invitation.targetRole)}`}
+                加入邀请{` · ${partnerRoleLabel(invitation.targetRole)}`}
               </ThemedText>
               <ThemedText selectable style={styles.invitationCode}>
                 {invitation.pairingCode}
               </ThemedText>
               <ThemedText style={styles.settingStatus}>
                 24 小时内有效 · {formatAuthDate(invitation.expiresAt)} 到期
-                {invitation.purpose === "recovery"
-                  ? "；使用后该身份的旧设备会退出"
-                  : ""}
               </ThemedText>
               <TouchableOpacity
                 style={styles.invitationCopyButton}
@@ -1466,11 +1477,11 @@ export function SettingsPanel({
             activeOpacity={0.7}
           >
             <View style={styles.settingTextWrap}>
-              <ThemedText style={styles.optionLabel}>永久恢复密钥</ThemedText>
+              <ThemedText style={styles.optionLabel}>我的恢复密钥</ThemedText>
               <ThemedText style={styles.settingStatus}>
                 {storedRecoveryCode
-                  ? "已按当前服务器隔离保存在本机；退出或换服不会删除"
-                  : "当前设备没有保存此空间的恢复密钥，可旋转生成新密钥"}
+                  ? "已作为本安装唯一的当前恢复凭据保存在本机；退出或换服不会自动删除"
+                  : "当前设备没有保存此身份的恢复密钥，可生成一枚新密钥"}
               </ThemedText>
             </View>
             {recoveryCodeLoading ? (
@@ -1495,7 +1506,7 @@ export function SettingsPanel({
               <ThemedText style={styles.recoveryWarning}>
                 {recoveryCodeSaveWarning
                   ? "密钥已经在服务器生效，但未能保存到本机。请立即复制到可信的密码管理器，关闭此页面后可能无法找回。"
-                  : "请像保管密码一样保管。任何拿到此密钥的人都可以尝试恢复你们的身份。"}
+                  : "请像保管密码一样保管。任何拿到此密钥的人都可以替换当前身份的登录设备。"}
               </ThemedText>
               <ThemedText selectable style={styles.invitationCode}>
                 {storedRecoveryCode}
@@ -1520,7 +1531,7 @@ export function SettingsPanel({
             activeOpacity={0.7}
           >
             <View style={styles.settingTextWrap}>
-              <ThemedText style={styles.optionLabel}>旋转恢复密钥</ThemedText>
+              <ThemedText style={styles.optionLabel}>更新我的恢复密钥</ThemedText>
               <ThemedText style={styles.settingStatus}>
                 生成新密钥并立即使旧密钥失效
               </ThemedText>

@@ -304,7 +304,7 @@ petRouter.post("/interactions", async (req, res) => {
     prisma.petActivity.create({
       data: {
         id: createActivityId(), coupleId: requireCurrentCoupleId(), petId: pet.id, role, action,
-        message: effect.message.replace("团团", current.name),
+        message: effect.message.replace("小栖", current.name),
         xpEarned, coinsUsed: effect.cost,
       },
     }),

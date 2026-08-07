@@ -1,24 +1,47 @@
+import { randomUUID } from "node:crypto";
+
+import { Prisma } from "@prisma/client";
+
 import { prisma } from "../db";
 import {
+  type CoupleMediaFileReference,
   deleteCollectedMediaFiles,
   parseCoupleMediaFileReferences,
 } from "./couple-data";
 
 const MEDIA_DELETION_INTERVAL_MS = 10 * 60 * 1000;
-const MEDIA_DELETION_MAX_ATTEMPTS = 10;
+const MEDIA_DELETION_WARNING_INTERVAL = 10;
 let cleanupTimer: NodeJS.Timeout | null = null;
+
+type MediaDeletionJobWriter = Pick<
+  Prisma.TransactionClient,
+  "mediaDeletionJob"
+>;
+
+export async function enqueueMediaDeletionJob(
+  coupleId: string,
+  files: CoupleMediaFileReference[],
+  client: MediaDeletionJobWriter = prisma,
+) {
+  if (files.length === 0) return null;
+  const jobId = randomUUID();
+  await client.mediaDeletionJob.create({
+    data: {
+      id: jobId,
+      coupleId,
+      filesJson: files as Prisma.InputJsonValue,
+    },
+  });
+  return jobId;
+}
+
+function shouldLogRetryWarning(attempts: number) {
+  return attempts === 1 || attempts % MEDIA_DELETION_WARNING_INTERVAL === 0;
+}
 
 export async function processMediaDeletionJob(jobId: string) {
   const job = await prisma.mediaDeletionJob.findUnique({ where: { id: jobId } });
   if (!job) return { completed: true, failedFileCount: 0 };
-
-  if (job.attempts >= MEDIA_DELETION_MAX_ATTEMPTS) {
-    console.error(
-      `[media-deletion] job ${job.id} for couple ${job.coupleId} exceeded ${MEDIA_DELETION_MAX_ATTEMPTS} attempts; leaving as dead-letter`,
-      job.lastError,
-    );
-    return { completed: false, failedFileCount: 1, deadLetter: true };
-  }
 
   try {
     const files = parseCoupleMediaFileReferences(job.filesJson);
@@ -36,9 +59,9 @@ export async function processMediaDeletionJob(jobId: string) {
         lastError: `${failedFileCount} 个媒体文件暂时无法删除`,
       },
     });
-    if (updatedAttempts >= MEDIA_DELETION_MAX_ATTEMPTS) {
-      console.error(
-        `[media-deletion] job ${job.id} for couple ${job.coupleId} dead-lettered after ${updatedAttempts} attempts (${failedFileCount} files remain)`,
+    if (shouldLogRetryWarning(updatedAttempts)) {
+      console.warn(
+        `[media-deletion] job ${job.id} for couple ${job.coupleId} still has ${failedFileCount} files after ${updatedAttempts} attempts; retrying on a later cleanup pass`,
       );
     }
     return { completed: false, failedFileCount };
@@ -54,9 +77,9 @@ export async function processMediaDeletionJob(jobId: string) {
       },
     });
     const nextAttempts = job.attempts + 1;
-    if (nextAttempts >= MEDIA_DELETION_MAX_ATTEMPTS) {
+    if (shouldLogRetryWarning(nextAttempts)) {
       console.error(
-        `[media-deletion] job ${job.id} for couple ${job.coupleId} dead-lettered after ${nextAttempts} attempts`,
+        `[media-deletion] job ${job.id} for couple ${job.coupleId} failed after ${nextAttempts} attempts; retrying on a later cleanup pass`,
         error,
       );
     }
@@ -66,7 +89,6 @@ export async function processMediaDeletionJob(jobId: string) {
 
 export async function processPendingMediaDeletionJobs(limit = 20) {
   const jobs = await prisma.mediaDeletionJob.findMany({
-    where: { attempts: { lt: MEDIA_DELETION_MAX_ATTEMPTS } },
     orderBy: { updatedAt: "asc" },
     take: Math.min(Math.max(limit, 1), 100),
     select: { id: true },

@@ -15,6 +15,7 @@ export async function pruneExpiredCoupleInvitations() {
       status: "open",
       createdAt: { lt: abandonedBefore },
       deviceSessions: { none: {} },
+      recoveryCredentials: { none: {} },
     },
   });
   const expiredInvitations = await prisma.couple.updateMany({

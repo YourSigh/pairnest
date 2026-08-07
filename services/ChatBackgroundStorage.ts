@@ -6,6 +6,16 @@ import { CoupleCacheEpoch } from '@/services/CoupleCacheEpoch';
 
 const STORAGE_KEY = 'chat_background_uri';
 const LEGACY_BACKGROUND_FILE = `${FileSystem.documentDirectory ?? ''}chat-background.jpg`;
+let backgroundMutationQueue: Promise<void> = Promise.resolve();
+
+function runBackgroundMutation<T>(operation: () => Promise<T>): Promise<T> {
+  const result = backgroundMutationQueue.then(operation);
+  backgroundMutationQueue = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
 
 function stripCacheParam(uri: string) {
   return uri.split('?')[0];
@@ -19,6 +29,35 @@ async function deleteBackgroundFile(uri: string | null | undefined) {
   } catch (error) {
     console.error('Error deleting chat background file:', error);
   }
+}
+
+async function deleteBackgroundFileWithRetry(
+  uri: string | null | undefined,
+) {
+  if (!uri) return null;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await FileSystem.deleteAsync(stripCacheParam(uri), { idempotent: true });
+      return null;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  return lastError;
+}
+
+async function listManagedBackgroundFiles() {
+  if (!FileSystem.documentDirectory) return [] as string[];
+  const names = await FileSystem.readDirectoryAsync(
+    FileSystem.documentDirectory,
+  );
+  return names
+    .filter(
+      (name) =>
+        name === 'chat-background.jpg' || name.startsWith('chat-background-'),
+    )
+    .map((name) => `${FileSystem.documentDirectory}${name}`);
 }
 
 export class ChatBackgroundStorage {
@@ -68,36 +107,65 @@ export class ChatBackgroundStorage {
       throw new Error('无法访问本地存储');
     }
 
-    const previousUri = await AsyncStorage.getItem(STORAGE_KEY);
-    const newFile = `${FileSystem.documentDirectory}chat-background-${Date.now()}.jpg`;
+    return runBackgroundMutation(async () => {
+      if (!CoupleCacheEpoch.isCurrent(generation)) return null;
+      const previousUri = await AsyncStorage.getItem(STORAGE_KEY);
+      const newFile = `${FileSystem.documentDirectory}chat-background-${Date.now()}.jpg`;
 
-    await FileSystem.copyAsync({
-      from: result.assets[0].uri,
-      to: newFile,
+      await FileSystem.copyAsync({
+        from: result.assets[0].uri,
+        to: newFile,
+      });
+
+      if (!CoupleCacheEpoch.isCurrent(generation)) {
+        await deleteBackgroundFile(newFile);
+        return null;
+      }
+
+      await AsyncStorage.setItem(STORAGE_KEY, newFile);
+      if (!CoupleCacheEpoch.isCurrent(generation)) {
+        const currentUri = await AsyncStorage.getItem(STORAGE_KEY);
+        if (currentUri === newFile) {
+          await AsyncStorage.removeItem(STORAGE_KEY);
+        }
+        await deleteBackgroundFile(newFile);
+        return null;
+      }
+
+      await deleteBackgroundFile(previousUri);
+      await deleteBackgroundFile(LEGACY_BACKGROUND_FILE);
+
+      return newFile;
     });
-
-    if (!CoupleCacheEpoch.isCurrent(generation)) {
-      await deleteBackgroundFile(newFile);
-      return null;
-    }
-
-    await AsyncStorage.setItem(STORAGE_KEY, newFile);
-    if (!CoupleCacheEpoch.isCurrent(generation)) {
-      await AsyncStorage.removeItem(STORAGE_KEY);
-      await deleteBackgroundFile(newFile);
-      return null;
-    }
-
-    await deleteBackgroundFile(previousUri);
-    await deleteBackgroundFile(LEGACY_BACKGROUND_FILE);
-
-    return newFile;
   }
 
   static async clearBackground(): Promise<void> {
-    const previousUri = await AsyncStorage.getItem(STORAGE_KEY);
-    await AsyncStorage.removeItem(STORAGE_KEY);
-    await deleteBackgroundFile(previousUri);
-    await deleteBackgroundFile(LEGACY_BACKGROUND_FILE);
+    return runBackgroundMutation(async () => {
+      const previousUri = await AsyncStorage.getItem(STORAGE_KEY);
+      const managedFiles = await listManagedBackgroundFiles();
+
+      // Publish an empty value before deleting files. If removeItem fails, a
+      // new couple still cannot resolve the previous couple's background URI.
+      await AsyncStorage.setItem(STORAGE_KEY, '');
+      const deletionErrors = (
+        await Promise.all(
+          [...new Set([previousUri, LEGACY_BACKGROUND_FILE, ...managedFiles])]
+            .filter((uri): uri is string => Boolean(uri))
+            .map((uri) => deleteBackgroundFileWithRetry(uri)),
+        )
+      ).filter((error): error is unknown => error !== null);
+
+      try {
+        await AsyncStorage.removeItem(STORAGE_KEY);
+      } catch (error) {
+        deletionErrors.push(error);
+      }
+
+      if (deletionErrors.length > 0) {
+        throw new Error('清理聊天背景时有本地文件未删除', {
+          cause: deletionErrors,
+        });
+      }
+    });
   }
 }

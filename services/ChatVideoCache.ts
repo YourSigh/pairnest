@@ -27,11 +27,24 @@ const DOWNLOAD_DIRECTORY = FileSystem.cacheDirectory
   ? `${FileSystem.cacheDirectory}chat-video-downloads/`
   : null;
 const downloads = new Map<string, Promise<string>>();
+const temporaryDownloads = new Set<string>();
 const leasedDownloads = new Map<string, number>();
+let downloadSequence = 0;
 const localVideoSources = new Map<
   string,
   { uri: string; expectedSize: number }
 >();
+
+async function clearImageCachesAfterStalePrefetch() {
+  const results = await Promise.allSettled([
+    Image.clearMemoryCache(),
+    Image.clearDiskCache(),
+  ]);
+  const failures = results.filter((result) => result.status === "rejected");
+  if (failures.length > 0) {
+    console.warn("[cache] stale video thumbnail cleanup incomplete", failures);
+  }
+}
 
 function safeSegment(value: string) {
   return value.replace(/[^a-zA-Z0-9._-]/g, "-");
@@ -72,6 +85,7 @@ async function validLocalSource(
 async function cleanupFinishedDownloads(keepUri: string) {
   if (!DOWNLOAD_DIRECTORY) return;
   const activeUris = new Set(downloads.keys());
+  for (const uri of temporaryDownloads) activeUris.add(uri);
   for (const uri of leasedDownloads.keys()) activeUris.add(uri);
   activeUris.add(keepUri);
   const names = await FileSystem.readDirectoryAsync(DOWNLOAD_DIRECTORY).catch(
@@ -101,13 +115,24 @@ export const ChatVideoCache = {
     messageId: string,
     _thumbnail: ChatVideoAssetFile,
   ) {
+    const generation = CoupleCacheEpoch.get();
     const source = await remoteSource(
       PAIRNEST_API.messageVideoThumbnail(messageId),
     );
-    await Image.prefetch(source.uri, {
-      cachePolicy: "disk",
-      headers: source.headers,
-    });
+    if (!CoupleCacheEpoch.isCurrent(generation)) return;
+    try {
+      await Image.prefetch(source.uri, {
+        cachePolicy: "disk",
+        headers: source.headers,
+      });
+    } finally {
+      if (!CoupleCacheEpoch.isCurrent(generation)) {
+        await clearImageCachesAfterStalePrefetch();
+      }
+    }
+    if (!CoupleCacheEpoch.isCurrent(generation)) {
+      throw new Error("情侣空间已切换，已取消视频封面缓存");
+    }
   },
 
   async playbackSource(
@@ -123,22 +148,34 @@ export const ChatVideoCache = {
     if (!DOWNLOAD_DIRECTORY) {
       throw new Error("当前设备不支持下载视频");
     }
+    const generation = CoupleCacheEpoch.get();
     const targetUri = `${DOWNLOAD_DIRECTORY}${safeSegment(
-      `${messageId}-${video.fileName}-${video.size}`,
+      `g${generation}-${messageId}-${video.fileName}-${video.size}`,
     )}${extension(video.fileName, ".mp4")}`;
     let request = downloads.get(targetUri);
     if (!request) {
-      const generation = CoupleCacheEpoch.get();
-      request = (async () => {
-        if (!CoupleCacheEpoch.isCurrent(generation)) {
+      downloadSequence += 1;
+      const temporaryUri = `${targetUri}.download-${Date.now()}-${downloadSequence}`;
+      temporaryDownloads.add(temporaryUri);
+      let ownedRequest: Promise<string>;
+      const assertCurrentOwner = () => {
+        if (
+          !CoupleCacheEpoch.isCurrent(generation) ||
+          downloads.get(targetUri) !== ownedRequest
+        ) {
           throw new Error("情侣空间已切换，已取消视频缓存");
         }
+      };
+      ownedRequest = Promise.resolve().then(async () => {
+        assertCurrentOwner();
         await FileSystem.makeDirectoryAsync(DOWNLOAD_DIRECTORY, {
           intermediates: true,
         });
+        assertCurrentOwner();
         const cachedInfo = await FileSystem.getInfoAsync(targetUri).catch(
           () => null,
         );
+        assertCurrentOwner();
         if (
           cachedInfo?.exists &&
           (cachedInfo.size === undefined || cachedInfo.size === video.size)
@@ -147,47 +184,64 @@ export const ChatVideoCache = {
         }
 
         await cleanupFinishedDownloads(targetUri);
+        assertCurrentOwner();
         const localUri = await validLocalSource(messageId, video);
-        await FileSystem.deleteAsync(targetUri, { idempotent: true });
+        assertCurrentOwner();
+        await FileSystem.deleteAsync(temporaryUri, { idempotent: true });
         if (localUri) {
-          await FileSystem.copyAsync({ from: localUri, to: targetUri });
+          await FileSystem.copyAsync({ from: localUri, to: temporaryUri });
         } else {
           const source = await remoteSource(
             PAIRNEST_API.messageVideoFile(messageId, true),
           );
           const result = await FileSystem.downloadAsync(
             source.uri,
-            targetUri,
+            temporaryUri,
             source.headers ? { headers: source.headers } : undefined,
           );
           if (result.status < 200 || result.status >= 300) {
             throw new Error(`下载视频失败（${result.status}）`);
           }
         }
-        if (!CoupleCacheEpoch.isCurrent(generation)) {
-          await FileSystem.deleteAsync(targetUri, { idempotent: true }).catch(
-            () => undefined,
-          );
-          throw new Error("情侣空间已切换，已取消视频缓存");
-        }
-        const info = await FileSystem.getInfoAsync(targetUri);
+        assertCurrentOwner();
+        const info = await FileSystem.getInfoAsync(temporaryUri);
         if (
           !info.exists ||
           (info.size !== undefined && info.size !== video.size)
         ) {
           throw new Error("下载的视频文件不完整");
         }
+        assertCurrentOwner();
+        await FileSystem.deleteAsync(targetUri, { idempotent: true });
+        assertCurrentOwner();
+        await FileSystem.moveAsync({ from: temporaryUri, to: targetUri });
+        if (!CoupleCacheEpoch.isCurrent(generation)) {
+          await FileSystem.deleteAsync(targetUri, { idempotent: true }).catch(
+            () => undefined,
+          );
+          throw new Error("情侣空间已切换，已取消视频缓存");
+        }
+        assertCurrentOwner();
         return targetUri;
-      })();
+      }).finally(async () => {
+        try {
+          await FileSystem.deleteAsync(temporaryUri, { idempotent: true });
+        } catch {
+          // A later cleanup pass can remove an abandoned temporary file.
+        } finally {
+          temporaryDownloads.delete(temporaryUri);
+        }
+      });
+      request = ownedRequest;
       downloads.set(targetUri, request);
     }
     try {
       const uri = await request;
+      if (!CoupleCacheEpoch.isCurrent(generation)) {
+        throw new Error("情侣空间已切换，已取消视频缓存");
+      }
       leasedDownloads.set(uri, (leasedDownloads.get(uri) ?? 0) + 1);
       return uri;
-    } catch (error) {
-      await FileSystem.deleteAsync(targetUri, { idempotent: true });
-      throw error;
     } finally {
       if (downloads.get(targetUri) === request) downloads.delete(targetUri);
     }
@@ -197,16 +251,26 @@ export const ChatVideoCache = {
     messageId: string,
     video: ChatVideoAsset,
     sourceUri: string,
+    generation = CoupleCacheEpoch.get(),
   ) {
+    if (!CoupleCacheEpoch.isCurrent(generation)) return;
     const info = await FileSystem.getInfoAsync(sourceUri).catch(() => null);
+    if (!CoupleCacheEpoch.isCurrent(generation)) return;
     if (
       info?.exists &&
       (info.size === undefined || info.size === video.size)
     ) {
-      localVideoSources.set(messageId, {
+      const source = {
         uri: sourceUri,
         expectedSize: video.size,
-      });
+      };
+      localVideoSources.set(messageId, source);
+      if (
+        !CoupleCacheEpoch.isCurrent(generation) &&
+        localVideoSources.get(messageId) === source
+      ) {
+        localVideoSources.delete(messageId);
+      }
     }
   },
 
@@ -224,12 +288,13 @@ export const ChatVideoCache = {
 
   async clearAll() {
     downloads.clear();
+    temporaryDownloads.clear();
     leasedDownloads.clear();
     localVideoSources.clear();
     if (DOWNLOAD_DIRECTORY) {
       await FileSystem.deleteAsync(DOWNLOAD_DIRECTORY, {
         idempotent: true,
-      }).catch(() => undefined);
+      });
     }
   },
 };

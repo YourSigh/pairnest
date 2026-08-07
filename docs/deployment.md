@@ -44,9 +44,9 @@ Important settings:
 | --- | --- | --- |
 | `PAIRNEST_DB_NAME` / `PAIRNEST_DB_USER` | `pairnest` | MySQL database and application user |
 | `PAIRNEST_DB_PASSWORD` / `PAIRNEST_DB_ROOT_PASSWORD` | required | Independent MySQL passwords |
-| `PAIRNEST_AUTH_TOKEN_SECRET` | required | Signs access tokens and pseudonymizes authentication-attempt keys |
-| `PAIRNEST_ALLOW_OPEN_COUPLE_CREATE` | `false` | Allow anonymous couple creation; enable only on private/trusted instances |
-| `PAIRNEST_ALLOW_LEGACY_SHARED_SECRET_ACTIVATE` | `false` | Allow old shared-secret activation into `legacy-default-couple`; enable only during migration |
+| `PAIRNEST_AUTH_TOKEN_SECRET` | required | Signs access tokens, pseudonymizes authentication records, and derives retry-safe onboarding results; keep it stable across deployments |
+| `PAIRNEST_ALLOW_OPEN_COUPLE_CREATE` | `false` | Allow unauthenticated couple creation; required for first-space creation and public multi-couple instances |
+| `PAIRNEST_ALLOW_LEGACY_SHARED_SECRET_ACTIVATE` | `false` | Allow the old shared secret to bootstrap only an unbound role in `legacy-default-couple`; it cannot take over a historical role and is migration-only |
 | `PAIRNEST_API_BIND` / `PAIRNEST_API_PORT` | `127.0.0.1` / `4000` | Host interface and port |
 | `PAIRNEST_CORS_ORIGIN` | `*` | Browser origin or comma-separated origins |
 | `PAIRNEST_TRUST_PROXY` | `false` | Trust proxy-provided client addresses and protocol |
@@ -60,6 +60,13 @@ Important settings:
 Enable `PAIRNEST_TRUST_PROXY` only when every direct path to the API passes
 through a trusted proxy that overwrites forwarding headers. PairNest uses the
 resolved client IP for anonymous rate limits.
+
+`PAIRNEST_ALLOW_OPEN_COUPLE_CREATE` is disabled by default, so an empty instance
+cannot create its first space until the operator enables it. A private
+one-couple deployment can disable it again after both members pair; a public
+multi-couple service must leave it enabled. The built-in IP limit only reduces
+abuse and does not replace HTTPS, capacity alerts, log monitoring, or upstream
+AI spending limits.
 
 AI and transcription settings are optional. Blank URL, key, or model values
 keep the corresponding integration disabled. PairNest does not support a
@@ -136,23 +143,37 @@ does not ship Caddy or any automatic TLS configuration.
 
 ## 5. Create and recover a couple space
 
-On first launch a user creates a space or enters an invitation. Creation
-returns two different secrets:
+The creator first chooses the female or male role. In one transaction the
+server creates the space, binds the creator's device, issues its session, and
+creates an invitation valid only for the opposite role. The invited partner is
+bound automatically after entering it. Creation returns two different secrets:
 
 - A 26-significant-character invitation, displayed in groups, which expires
   after 24 hours and is consumed after the target member joins.
-- A persistent recovery key with the same entropy, which stays valid until an
-  authenticated member rotates it.
+- A recovery key with the same entropy that belongs only to the creator's role.
 
-Only hashes are stored on the server. Keep the recovery key in a password
-manager or similarly protected location. Creating a new invitation invalidates
-the previous invitation; rotating the recovery key invalidates the old key.
+Only hashes are stored on the server. The female and male roles have separate
+recovery keys; each key can recover only its own role. A successful recovery
+revokes that role's previous session. The key remains valid until that member
+explicitly rotates it while signed in, so a lost recovery response cannot lock
+the member out permanently. Keep it in a password manager or similarly
+protected location. Creating a new invitation invalidates the previous
+invitation. Once the target role has joined, the other partner cannot issue a
+replacement takeover invitation; that member must use their own recovery key.
+
+Before a state-changing onboarding request, the client securely persists its
+creation request identifier or validated activation step. The server keeps only
+one-way lifecycle markers on the device session. If the transaction commits but
+the HTTP response is lost, the same device ID, device secret, and original
+request can retrieve the same result. A normal token refresh, logout, recovery,
+rebind, or explicit recovery-key rotation clears the corresponding marker, and
+another device cannot replay a consumed invitation with the code alone.
 Expired invitation hashes are cleared by a maintenance task that runs every six
-hours. An open space that never activated any device session is treated as
-abandoned and deleted after seven days.
+hours. A legacy unfinished open space with neither a device session nor a member
+recovery record is treated as abandoned and deleted after seven days.
 
-The server binds each device to Partner A or Partner B. A valid session's JWT
-contains that confirmed member and couple identity. Logging out revokes the
+The server binds each device to the female (`partnerA`) or male (`partnerB`)
+role. A valid session's JWT contains that confirmed member and couple identity. Logging out revokes the
 session, and a recovery activation replaces and disconnects the previous
 session for that slot.
 
@@ -182,7 +203,8 @@ An unpaired space is deleted immediately on request. A paired space requires
 confirmation by the other member, or a second confirmation by the requester
 after seven days. Database rows are removed immediately; recorded media is
 queued for asynchronous cleanup (`mediaCleanupPending` may be true until the
-job finishes, with failed jobs dead-lettered after repeated attempts). Active
+job finishes). Temporarily failed cleanup jobs continue retrying on later
+maintenance passes; operators should monitor persistent failures. Active
 WebSockets are disconnected. Independent backups and third-party provider data
 must be handled separately. See [Privacy](privacy.md).
 

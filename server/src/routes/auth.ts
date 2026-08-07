@@ -14,6 +14,8 @@ import {
   createAccessToken,
   createNextRefreshToken,
   createOpaqueToken,
+  createServerBoundHash,
+  createServerBoundToken,
   createSessionId,
   hashOpaqueToken,
   normalizeDeviceMetadata,
@@ -27,6 +29,8 @@ import {
 import { LEGACY_COUPLE_ID } from "../lib/data-migration";
 import { processMediaDeletionJob } from "../lib/media-deletion";
 import {
+  createServerBoundPairingCode,
+  formatPairingCode,
   generatePairingCode,
   hashPairingCode,
   normalizePairingCode,
@@ -44,10 +48,22 @@ const SERIALIZABLE_RETRY_COUNT = 4;
 
 type DeletionAction = "request" | "confirm";
 
+class AuthCodeCollisionError extends Error {}
+
 export const authRouter = Router();
 
 function requiredString(value: unknown, maxLength: number) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function normalizeRequestId(value: unknown) {
+  if (typeof value !== "string") return "";
+  const requestId = value.trim();
+  return requestId.length >= 16 &&
+    requestId.length <= 128 &&
+    /^[A-Za-z0-9_-]+$/.test(requestId)
+    ? requestId
+    : "";
 }
 
 function getClientIp(req: Request) {
@@ -100,6 +116,38 @@ function oppositePartnerRole(role: PartnerRole): PartnerRole {
   return role === "partnerA" ? "partnerB" : "partnerA";
 }
 
+function createInvitationRecoveryCode(
+  pairingCode: string,
+  deviceId: string,
+  partnerRole: PartnerRole,
+  coupleId: string,
+) {
+  return createServerBoundPairingCode(
+    "pairnest-invitation-activation-recovery-v1",
+    pairingCode,
+    deviceId,
+    partnerRole,
+    coupleId,
+  );
+}
+
+function createInvitationRefreshToken(
+  pairingCode: string,
+  deviceId: string,
+  deviceSecretHash: string,
+  partnerRole: PartnerRole,
+  coupleId: string,
+) {
+  return createServerBoundToken(
+    "pairnest-invitation-activation-refresh-v1",
+    pairingCode,
+    deviceId,
+    deviceSecretHash,
+    partnerRole,
+    coupleId,
+  );
+}
+
 export function isOpenCoupleCreateEnabled() {
   const configured = process.env.PAIRNEST_ALLOW_OPEN_COUPLE_CREATE?.trim().toLowerCase();
   if (!configured) return false;
@@ -130,6 +178,7 @@ function isRetryableTransactionError(error: unknown) {
 
 async function serializableTransaction<T>(
   operation: (tx: Prisma.TransactionClient) => Promise<T>,
+  retryUniqueConstraint = false,
 ) {
   for (let attempt = 0; attempt < SERIALIZABLE_RETRY_COUNT; attempt += 1) {
     try {
@@ -137,8 +186,16 @@ async function serializableTransaction<T>(
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
       });
     } catch (error) {
+      const retryableUniqueConstraint =
+        retryUniqueConstraint &&
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002";
+      const retryableAuthCodeCollision =
+        retryUniqueConstraint && error instanceof AuthCodeCollisionError;
       if (
-        !isRetryableTransactionError(error) ||
+        (!isRetryableTransactionError(error) &&
+          !retryableUniqueConstraint &&
+          !retryableAuthCodeCollision) ||
         attempt === SERIALIZABLE_RETRY_COUNT - 1
       ) {
         throw error;
@@ -151,24 +208,60 @@ async function serializableTransaction<T>(
 
 async function createOrRotateInvitation(
   coupleId: string,
-  targetRole: PartnerRole | null,
-  purpose: "join" | "recovery",
+  targetRole: PartnerRole,
 ) {
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const pairingCode = generatePairingCode();
     const pairingCodeHash = hashPairingCode(pairingCode);
     const expiresAt = pairingCodeExpiresAt();
     try {
-      await prisma.couple.update({
-        where: { id: coupleId },
-        data: {
-          pairingCodeHash,
-          pairingCodeExpiresAt: expiresAt,
-          pairingTargetRole: targetRole,
-          pairingPurpose: purpose,
-        },
+      const result = await serializableTransaction(async (tx) => {
+        const [couple, targetCredential, targetSession, recoveryCollision] =
+          await Promise.all([
+            tx.couple.findUnique({
+              where: { id: coupleId },
+              select: { status: true },
+            }),
+            tx.partnerRecoveryCredential.findUnique({
+              where: {
+                coupleId_partnerRole: { coupleId, partnerRole: targetRole },
+              },
+              select: { coupleId: true },
+            }),
+            tx.deviceSession.findFirst({
+              where: { coupleId, partnerRole: targetRole },
+              select: { id: true },
+            }),
+            tx.partnerRecoveryCredential.findUnique({
+              where: { codeHash: pairingCodeHash },
+              select: { coupleId: true },
+            }),
+          ]);
+        if (
+          !couple ||
+          couple.status !== "open" ||
+          targetCredential ||
+          targetSession
+        ) {
+          return { kind: "target-bound" as const };
+        }
+        if (recoveryCollision) return { kind: "collision" as const };
+        await tx.couple.update({
+          where: { id: coupleId },
+          data: {
+            pairingCodeHash,
+            pairingCodeExpiresAt: expiresAt,
+            pairingTargetRole: targetRole,
+            pairingPurpose: "join",
+          },
+        });
+        return { kind: "success" as const };
       });
-      return { pairingCode, expiresAt };
+      if (result.kind === "target-bound") {
+        return { kind: "target-bound" as const };
+      }
+      if (result.kind === "collision") continue;
+      return { kind: "success" as const, pairingCode, expiresAt };
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -183,19 +276,19 @@ async function createOrRotateInvitation(
   throw new Error("配对密钥生成失败");
 }
 
-async function rotateRecoveryCode(coupleId: string) {
+async function rotateRecoveryCode(
+  tx: Prisma.TransactionClient,
+  coupleId: string,
+  partnerRole: PartnerRole,
+) {
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const recoveryCode = generatePairingCode();
     try {
-      await prisma.couple.update({
-        where: { id: coupleId },
-        data: { recoveryCodeHash: hashPairingCode(recoveryCode) },
-      });
+      await storeRecoveryCode(tx, coupleId, partnerRole, recoveryCode);
       return recoveryCode;
     } catch (error) {
       if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2002" &&
+        error instanceof AuthCodeCollisionError &&
         attempt < 3
       ) {
         continue;
@@ -204,6 +297,37 @@ async function rotateRecoveryCode(coupleId: string) {
     }
   }
   throw new Error("恢复密钥生成失败");
+}
+
+async function storeRecoveryCode(
+  tx: Prisma.TransactionClient,
+  coupleId: string,
+  partnerRole: PartnerRole,
+  recoveryCode: string,
+) {
+  const codeHash = hashPairingCode(recoveryCode);
+  const invitationCollision = await tx.couple.findFirst({
+    where: { pairingCodeHash: codeHash },
+    select: { id: true },
+  });
+  if (invitationCollision) throw new AuthCodeCollisionError();
+  try {
+    await tx.partnerRecoveryCredential.upsert({
+      where: {
+        coupleId_partnerRole: { coupleId, partnerRole },
+      },
+      create: { coupleId, partnerRole, codeHash },
+      update: { codeHash },
+    });
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      throw new AuthCodeCollisionError();
+    }
+    throw error;
+  }
 }
 
 async function recordInvalidActivation(
@@ -223,22 +347,42 @@ async function recordInvalidActivation(
 authRouter.get("/status", requireAuth, async (_req, res) => {
   const coupleId = res.locals.auth.claims.coupleId as string;
   const partnerRole = getAuthenticatedPartnerRole(res);
-  const [couple, activePartner] = await Promise.all([
-    prisma.couple.findUniqueOrThrow({ where: { id: coupleId } }),
-    prisma.deviceSession.findFirst({
-      where: {
-        coupleId,
-        partnerRole: oppositePartnerRole(partnerRole),
-        revokedAt: null,
-      },
-      select: { id: true },
-    }),
-  ]);
+  const [couple, activePartner, partnerCredential, historicalPartner] =
+    await Promise.all([
+      prisma.couple.findUniqueOrThrow({ where: { id: coupleId } }),
+      prisma.deviceSession.findFirst({
+        where: {
+          coupleId,
+          partnerRole: oppositePartnerRole(partnerRole),
+          revokedAt: null,
+        },
+        select: { id: true },
+      }),
+      prisma.partnerRecoveryCredential.findUnique({
+        where: {
+          coupleId_partnerRole: {
+            coupleId,
+            partnerRole: oppositePartnerRole(partnerRole),
+          },
+        },
+        select: { coupleId: true },
+      }),
+      prisma.deviceSession.findFirst({
+        where: {
+          coupleId,
+          partnerRole: oppositePartnerRole(partnerRole),
+        },
+        select: { id: true },
+      }),
+    ]);
   res.json({
     ok: true,
     coupleId,
     partnerRole,
     partnerActive: Boolean(activePartner),
+    partnerBound:
+      couple.status === "paired" ||
+      Boolean(partnerCredential || historicalPartner),
     deletionRequestedBy: couple.deletionRequestedBy,
     deletionRequestedAt: couple.deletionRequestedAt,
     deletionCanCompleteAt:
@@ -257,45 +401,345 @@ authRouter.get("/couples/storage", requireAuth, async (_req, res) => {
 authRouter.post(
   "/couples/create",
   ipRateLimit("couple-create", 5, 60 * 60 * 1000),
-  async (_req, res) => {
-    if (!isOpenCoupleCreateEnabled()) {
-      res.status(403).json({
+  async (req, res) => {
+    const openCreateEnabled = isOpenCoupleCreateEnabled();
+    const partnerRole = normalizePartnerRole(req.body?.partnerRole);
+    const requestId = normalizeRequestId(req.body?.requestId);
+    const deviceId = requiredString(req.body?.deviceId, 128);
+    const deviceSecret = requiredString(req.body?.deviceSecret, 256);
+    const metadata = normalizeDeviceMetadata(req.body?.device);
+    if (!partnerRole || !requestId || !deviceId || deviceSecret.length < 32) {
+      res.status(400).json({
         ok: false,
-        code: "OPEN_COUPLE_CREATE_DISABLED",
-        message: "此实例已关闭公开创建情侣空间，请联系运营者获取邀请",
+        code: "INVALID_CREATE_REQUEST",
+        message: "创建情侣空间前必须提供请求标识、本人身份和有效设备凭证",
       });
       return;
     }
 
-    const coupleId = createSessionId();
-    const pairingCode = generatePairingCode();
-    let recoveryCode = generatePairingCode();
-    while (recoveryCode === pairingCode) {
-      recoveryCode = generatePairingCode();
-    }
+    const deviceSecretHash = hashOpaqueToken(deviceSecret);
+    const createRequestHash = createServerBoundHash(
+      "pairnest-couple-create-request-v1",
+      requestId,
+      deviceId,
+      partnerRole,
+    );
+    const pairingCode = createServerBoundPairingCode(
+      "pairnest-couple-create-invitation-v1",
+      requestId,
+      deviceId,
+      partnerRole,
+    );
+    const recoveryCode = createServerBoundPairingCode(
+      "pairnest-couple-create-recovery-v1",
+      requestId,
+      deviceId,
+      partnerRole,
+    );
     const pairingCodeHash = hashPairingCode(pairingCode);
     const recoveryCodeHash = hashPairingCode(recoveryCode);
-    const expiresAt = pairingCodeExpiresAt();
+    const refreshToken = createServerBoundToken(
+      "pairnest-couple-create-refresh-v1",
+      requestId,
+      deviceId,
+      partnerRole,
+      deviceSecretHash,
+    );
+    const refreshTokenHash = hashOpaqueToken(refreshToken);
 
     try {
-      await prisma.couple.create({
-        data: {
-          id: coupleId,
-          pairingCodeHash,
-          recoveryCodeHash,
-          pairingCodeExpiresAt: expiresAt,
-          pairingPurpose: "join",
-          status: "open",
-        },
-      });
+      let result:
+        | {
+            kind: "success";
+            coupleId: string;
+            sessionId: string;
+            pairingCode: string;
+            recoveryCode: string;
+            expiresAt: Date;
+          }
+        | { kind: "device-conflict" }
+        | { kind: "request-conflict" }
+        | { kind: "open-create-disabled" }
+        | null = null;
+
+      for (let attempt = 0; attempt < 4 && !result; attempt += 1) {
+        const coupleId = createSessionId();
+        const expiresAt = pairingCodeExpiresAt();
+        try {
+          result = await serializableTransaction(async (tx) => {
+            const now = new Date();
+            const existing = await tx.deviceSession.findUnique({
+              where: { deviceId },
+            });
+            if (existing) {
+              if (!tokenHashMatches(deviceSecret, existing.deviceSecretHash)) {
+                return { kind: "device-conflict" as const };
+              }
+              // This is a lifecycle marker rather than a TTL. Refresh,
+              // logout, recovery, rebind, or invitation consumption clears it.
+              const sameRequest =
+                existing.lastCreateRequestHash === createRequestHash;
+              const retryAllowed = Boolean(
+                sameRequest &&
+                  !existing.revokedAt &&
+                  existing.partnerRole === partnerRole,
+              );
+              if (retryAllowed) {
+                const targetRole = oppositePartnerRole(partnerRole);
+                const [couple, credential, targetCredential, targetSession] =
+                  await Promise.all([
+                    tx.couple.findUnique({
+                      where: { id: existing.coupleId },
+                    }),
+                    tx.partnerRecoveryCredential.findUnique({
+                      where: {
+                        coupleId_partnerRole: {
+                          coupleId: existing.coupleId,
+                          partnerRole,
+                        },
+                      },
+                    }),
+                    tx.partnerRecoveryCredential.findUnique({
+                      where: {
+                        coupleId_partnerRole: {
+                          coupleId: existing.coupleId,
+                          partnerRole: targetRole,
+                        },
+                      },
+                      select: { coupleId: true },
+                    }),
+                    tx.deviceSession.findFirst({
+                      where: {
+                        coupleId: existing.coupleId,
+                        partnerRole: targetRole,
+                      },
+                      select: { id: true },
+                    }),
+                  ]);
+                if (
+                  !couple ||
+                  couple.status !== "open" ||
+                  credential?.codeHash !== recoveryCodeHash ||
+                  targetCredential ||
+                  targetSession
+                ) {
+                  return { kind: "request-conflict" as const };
+                }
+                const invitationMatches =
+                  couple.pairingCodeHash === pairingCodeHash &&
+                  couple.pairingTargetRole === targetRole &&
+                  couple.pairingPurpose === "join";
+                const invitationWasCleared =
+                  !couple.pairingCodeHash &&
+                  !couple.pairingCodeExpiresAt &&
+                  !couple.pairingTargetRole &&
+                  !couple.pairingPurpose;
+                if (!invitationMatches && !invitationWasCleared) {
+                  return { kind: "request-conflict" as const };
+                }
+                let replayExpiresAt = couple.pairingCodeExpiresAt;
+                if (
+                  invitationWasCleared ||
+                  !replayExpiresAt ||
+                  replayExpiresAt <= now
+                ) {
+                  replayExpiresAt = pairingCodeExpiresAt(now.getTime());
+                  await tx.couple.update({
+                    where: { id: couple.id },
+                    data: {
+                      pairingCodeHash,
+                      pairingCodeExpiresAt: replayExpiresAt,
+                      pairingTargetRole: targetRole,
+                      pairingPurpose: "join",
+                    },
+                  });
+                }
+                const session = await tx.deviceSession.update({
+                  where: { id: existing.id },
+                  data: {
+                    refreshTokenHash,
+                    previousRefreshTokenHash: null,
+                    previousRefreshValidUntil: null,
+                    ...metadata,
+                    lastUsedAt: now,
+                  },
+                });
+                return {
+                  kind: "success" as const,
+                  coupleId: couple.id,
+                  sessionId: session.id,
+                  pairingCode,
+                  recoveryCode,
+                  expiresAt: replayExpiresAt,
+                };
+              }
+              if (!existing.revokedAt || sameRequest) {
+                return { kind: "request-conflict" as const };
+              }
+            }
+            if (!openCreateEnabled) {
+              return { kind: "open-create-disabled" as const };
+            }
+
+            const [
+              pairingCouple,
+              recoveryCouple,
+              pairingCredential,
+              recoveryCredential,
+            ] = await Promise.all([
+              tx.couple.findUnique({
+                where: { pairingCodeHash },
+                select: { id: true },
+              }),
+              tx.couple.findUnique({
+                where: { pairingCodeHash: recoveryCodeHash },
+                select: { id: true },
+              }),
+              tx.partnerRecoveryCredential.findUnique({
+                where: { codeHash: pairingCodeHash },
+                select: { coupleId: true },
+              }),
+              tx.partnerRecoveryCredential.findUnique({
+                where: { codeHash: recoveryCodeHash },
+                select: { coupleId: true },
+              }),
+            ]);
+            if (
+              pairingCodeHash === recoveryCodeHash ||
+              pairingCouple ||
+              recoveryCouple ||
+              pairingCredential ||
+              recoveryCredential
+            ) {
+              throw new AuthCodeCollisionError();
+            }
+
+            await tx.couple.create({
+              data: {
+                id: coupleId,
+                pairingCodeHash,
+                pairingCodeExpiresAt: expiresAt,
+                pairingTargetRole: oppositePartnerRole(partnerRole),
+                pairingPurpose: "join",
+                status: "open",
+              },
+            });
+
+            const sessionId = existing?.id ?? createSessionId();
+            if (existing) {
+              await tx.deviceSession.update({
+                where: { id: existing.id },
+                data: {
+                  coupleId,
+                  partnerRole,
+                  deviceSecretHash,
+                  refreshTokenHash,
+                  previousRefreshTokenHash: null,
+                  previousRefreshValidUntil: null,
+                  lastCreateRequestHash: createRequestHash,
+                  lastActivationCodeHash: null,
+                  lastRecoveryRotationRequestHash: null,
+                  revokedAt: null,
+                  ...metadata,
+                  lastUsedAt: new Date(),
+                },
+              });
+            } else {
+              await tx.deviceSession.create({
+                data: {
+                  id: sessionId,
+                  coupleId,
+                  deviceId,
+                  partnerRole,
+                  deviceSecretHash,
+                  refreshTokenHash,
+                  lastCreateRequestHash: createRequestHash,
+                  ...metadata,
+                },
+              });
+            }
+            await storeRecoveryCode(
+              tx,
+              coupleId,
+              partnerRole,
+              recoveryCode,
+            );
+            return {
+              kind: "success" as const,
+              coupleId,
+              sessionId,
+              pairingCode,
+              recoveryCode,
+              expiresAt,
+            };
+          });
+        } catch (error) {
+          if (error instanceof AuthCodeCollisionError) throw error;
+          if (
+            error instanceof Prisma.PrismaClientKnownRequestError &&
+            error.code === "P2002" &&
+            attempt < 3
+          ) {
+            continue;
+          }
+          throw error;
+        }
+      }
+
+      if (!result) {
+        throw new Error("创建情侣空间重试次数已用完");
+      }
+      if (result.kind === "device-conflict") {
+        res.status(409).json({
+          ok: false,
+          code: "DEVICE_ALREADY_BOUND",
+          message: "该设备已绑定情侣空间，请先退出当前空间",
+        });
+        return;
+      }
+      if (result.kind === "request-conflict") {
+        res.status(409).json({
+          ok: false,
+          code: "CREATE_REQUEST_CONFLICT",
+          message: "该创建请求与当前设备状态不一致，请重新开始创建流程",
+        });
+        return;
+      }
+      if (result.kind === "open-create-disabled") {
+        res.status(403).json({
+          ok: false,
+          code: "OPEN_COUPLE_CREATE_DISABLED",
+          message: "此实例已关闭公开创建情侣空间，请联系运营者获取邀请",
+        });
+        return;
+      }
+
       res.status(201).json({
         ok: true,
-        coupleId,
-        pairingCode,
-        recoveryCode,
-        expiresAt,
+        ...createTokenResponse(
+          result.sessionId,
+          deviceId,
+          result.coupleId,
+          partnerRole,
+          refreshToken,
+        ),
+        pairingCode: result.pairingCode,
+        expiresAt: result.expiresAt,
+        recoveryCode: result.recoveryCode,
       });
     } catch (error) {
+      if (
+        error instanceof AuthCodeCollisionError ||
+        (error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === "P2002")
+      ) {
+        res.status(409).json({
+          ok: false,
+          code: "CREATE_CODE_CONFLICT",
+          message: "创建请求标识发生冲突，请生成新的请求标识后重试",
+        });
+        return;
+      }
       console.error("[auth] create couple failed", error);
       res.status(500).json({ ok: false, message: "创建情侣空间失败，请重试" });
     }
@@ -318,18 +762,21 @@ authRouter.post(
     }
 
     const codeHash = hashPairingCode(normalized);
-    const couple = await prisma.couple.findFirst({
-      where: {
-        OR: [{ pairingCodeHash: codeHash }, { recoveryCodeHash: codeHash }],
-      },
-    });
-    const isRecoveryCode = couple?.recoveryCodeHash === codeHash;
+    const [invitationCouple, recoveryCredential] = await Promise.all([
+      prisma.couple.findUnique({ where: { pairingCodeHash: codeHash } }),
+      prisma.partnerRecoveryCredential.findUnique({
+        where: { codeHash },
+      }),
+    ]);
     const validInvitation = Boolean(
-      couple?.pairingCodeHash === codeHash &&
-      couple.pairingCodeExpiresAt &&
-      couple.pairingCodeExpiresAt > new Date(),
+      invitationCouple?.pairingTargetRole &&
+        invitationCouple.status === "open" &&
+        invitationCouple.pairingPurpose === "join" &&
+        invitationCouple.pairingCodeExpiresAt &&
+        invitationCouple.pairingCodeExpiresAt > new Date(),
     );
-    if (!couple || (!isRecoveryCode && !validInvitation)) {
+    const ambiguousCode = Boolean(invitationCouple && recoveryCredential);
+    if (ambiguousCode || (!recoveryCredential && !validInvitation)) {
       res.status(404).json({
         ok: false,
         code: "PAIRING_CODE_NOT_FOUND",
@@ -338,25 +785,24 @@ authRouter.post(
       return;
     }
 
-    const sessions = await prisma.deviceSession.findMany({
-      where: { coupleId: couple.id, revokedAt: null },
-      select: { partnerRole: true },
-    });
-    const takenRoles = new Set(sessions.map((session) => session.partnerRole));
-    const availableRoles = isRecoveryCode
-      ? (["partnerA", "partnerB"] as const)
-      : couple.pairingTargetRole
-        ? [couple.pairingTargetRole]
-        : (["partnerA", "partnerB"] as const).filter(
-            (role) => !takenRoles.has(role),
-          );
+    const coupleId = recoveryCredential
+      ? recoveryCredential.coupleId
+      : invitationCouple!.id;
+    const targetRole = recoveryCredential
+      ? recoveryCredential.partnerRole
+      : invitationCouple!.pairingTargetRole!;
 
     res.json({
       ok: true,
-      coupleId: couple.id,
-      availableRoles,
-      expiresAt: isRecoveryCode ? null : couple.pairingCodeExpiresAt,
-      purpose: isRecoveryCode ? "recovery" : couple.pairingPurpose,
+      coupleId,
+      targetRole,
+      availableRoles: [targetRole],
+      expiresAt: recoveryCredential
+        ? null
+        : invitationCouple!.pairingCodeExpiresAt,
+      purpose: recoveryCredential
+        ? "recovery"
+        : invitationCouple!.pairingPurpose,
     });
   },
 );
@@ -380,7 +826,7 @@ authRouter.post(
       return;
     }
 
-    if (!deviceId || deviceSecret.length < 32 || !requestedPartnerRole) {
+    if (!deviceId || deviceSecret.length < 32) {
       await recordInvalidActivation(
         res,
         attemptSubjects,
@@ -417,34 +863,114 @@ authRouter.post(
     }
 
     const deviceSecretHash = hashOpaqueToken(deviceSecret);
-    const refreshToken = createOpaqueToken();
-    const refreshTokenHash = hashOpaqueToken(refreshToken);
+    const fallbackRefreshToken = createOpaqueToken();
 
     try {
       const result = await serializableTransaction(async (tx) => {
         const now = new Date();
+        const [invitationCouple, recoveryCredential] = legacyAuthorized
+          ? [null, null]
+          : await Promise.all([
+              tx.couple.findUnique({
+                where: { pairingCodeHash },
+              }),
+              tx.partnerRecoveryCredential.findUnique({
+                where: { codeHash: pairingCodeHash },
+              }),
+            ]);
+        if (invitationCouple && recoveryCredential) {
+          return { kind: "invalid-code" as const };
+        }
+        if (!legacyAuthorized && !invitationCouple && !recoveryCredential) {
+          const retrySession = await tx.deviceSession.findUnique({
+            where: { deviceId },
+          });
+          if (!retrySession) return { kind: "invalid-code" as const };
+          // A consumed invitation can only be replayed while this exact
+          // session remains active and no later lifecycle action cleared it.
+          if (
+            !tokenHashMatches(deviceSecret, retrySession.deviceSecretHash)
+          ) {
+            return { kind: "device-conflict" as const };
+          }
+          if (
+            retrySession.revokedAt ||
+            retrySession.lastActivationCodeHash !== pairingCodeHash ||
+            (requestedCoupleId &&
+              requestedCoupleId !== retrySession.coupleId)
+          ) {
+            return { kind: "invalid-code" as const };
+          }
+          if (
+            requestedPartnerRole &&
+            requestedPartnerRole !== retrySession.partnerRole
+          ) {
+            return { kind: "invitation-role" as const };
+          }
+
+          const recoveryCode = createInvitationRecoveryCode(
+            normalizedCode,
+            deviceId,
+            retrySession.partnerRole,
+            retrySession.coupleId,
+          );
+          const credential =
+            await tx.partnerRecoveryCredential.findUnique({
+              where: {
+                coupleId_partnerRole: {
+                  coupleId: retrySession.coupleId,
+                  partnerRole: retrySession.partnerRole,
+                },
+              },
+              select: { codeHash: true },
+            });
+          if (credential?.codeHash !== hashPairingCode(recoveryCode)) {
+            return { kind: "invalid-code" as const };
+          }
+          const refreshToken = createInvitationRefreshToken(
+            normalizedCode,
+            deviceId,
+            deviceSecretHash,
+            retrySession.partnerRole,
+            retrySession.coupleId,
+          );
+          const session = await tx.deviceSession.update({
+            where: { id: retrySession.id },
+            data: {
+              refreshTokenHash: hashOpaqueToken(refreshToken),
+              previousRefreshTokenHash: null,
+              previousRefreshValidUntil: null,
+              ...metadata,
+              lastUsedAt: now,
+            },
+          });
+          return {
+            kind: "success" as const,
+            session,
+            coupleId: retrySession.coupleId,
+            revokedSessionIds: [] as string[],
+            recoveryCode,
+            refreshToken,
+          };
+        }
         const couple = legacyAuthorized
           ? await tx.couple.findUnique({ where: { id: LEGACY_COUPLE_ID } })
-          : await tx.couple.findFirst({
-              where: {
-                OR: [
-                  { pairingCodeHash },
-                  { recoveryCodeHash: pairingCodeHash },
-                ],
-              },
-            });
-        const usingRecoveryCode = Boolean(
-          !legacyAuthorized && couple?.recoveryCodeHash === pairingCodeHash,
-        );
-        const usingInvitationCode = Boolean(
-          !legacyAuthorized && couple?.pairingCodeHash === pairingCodeHash,
-        );
+          : recoveryCredential
+            ? await tx.couple.findUnique({
+                where: { id: recoveryCredential.coupleId },
+              })
+            : invitationCouple;
+        const usingRecoveryCode = Boolean(recoveryCredential);
+        const usingInvitationCode = Boolean(invitationCouple);
 
         if (
           !couple ||
           (!legacyAuthorized &&
             !usingRecoveryCode &&
             (!usingInvitationCode ||
+              couple.status !== "open" ||
+              !couple.pairingTargetRole ||
+              couple.pairingPurpose !== "join" ||
               !couple.pairingCodeExpiresAt ||
               couple.pairingCodeExpiresAt <= now)) ||
           (requestedCoupleId && requestedCoupleId !== couple.id)
@@ -452,13 +978,29 @@ authRouter.post(
           return { kind: "invalid-code" as const };
         }
 
-        const invitationTarget =
-          legacyAuthorized || usingRecoveryCode
-            ? null
-            : couple.pairingTargetRole;
-        if (invitationTarget && invitationTarget !== requestedPartnerRole) {
+        const activationRole = legacyAuthorized
+          ? requestedPartnerRole
+          : recoveryCredential?.partnerRole ?? couple.pairingTargetRole;
+        if (!activationRole) {
+          return { kind: "role-required" as const };
+        }
+        if (
+          requestedPartnerRole &&
+          activationRole !== requestedPartnerRole
+        ) {
           return { kind: "invitation-role" as const };
         }
+
+        const refreshToken = usingInvitationCode
+          ? createInvitationRefreshToken(
+              normalizedCode,
+              deviceId,
+              deviceSecretHash,
+              activationRole,
+              couple.id,
+            )
+          : fallbackRefreshToken;
+        const refreshTokenHash = hashOpaqueToken(refreshToken);
 
         const existing = await tx.deviceSession.findUnique({
           where: { deviceId },
@@ -473,23 +1015,61 @@ authRouter.post(
           existing &&
           !existing.revokedAt &&
           (existing.coupleId !== couple.id ||
-            existing.partnerRole !== requestedPartnerRole)
+            existing.partnerRole !== activationRole)
         ) {
           return { kind: "device-conflict" as const };
+        }
+
+        if (usingInvitationCode || legacyAuthorized) {
+          const [roleCredential, historicalRoleSession] = await Promise.all([
+            tx.partnerRecoveryCredential.findUnique({
+              where: {
+                coupleId_partnerRole: {
+                  coupleId: couple.id,
+                  partnerRole: activationRole,
+                },
+              },
+              select: { coupleId: true },
+            }),
+            tx.deviceSession.findFirst({
+              where: {
+                coupleId: couple.id,
+                partnerRole: activationRole,
+              },
+              select: { id: true },
+            }),
+          ]);
+          // An invitation is only for the role's first binding. Historical
+          // membership remains reserved after logout or device replacement;
+          // that member must recover with their own credential instead. The
+          // legacy couple-wide secret follows the same rule; it may only
+          // bootstrap an unbound role or retry the exact active device that
+          // the server has already confirmed for that role.
+          const replayingConfirmedLegacyDevice = Boolean(
+            legacyAuthorized &&
+              existing &&
+              !existing.revokedAt &&
+              existing.coupleId === couple.id &&
+              existing.partnerRole === activationRole,
+          );
+          if (
+            (roleCredential || historicalRoleSession) &&
+            !replayingConfirmedLegacyDevice
+          ) {
+            return { kind: "role-taken" as const };
+          }
         }
 
         const otherRoleSessions = await tx.deviceSession.findMany({
           where: {
             coupleId: couple.id,
-            partnerRole: requestedPartnerRole,
+            partnerRole: activationRole,
             revokedAt: null,
             ...(existing ? { id: { not: existing.id } } : {}),
           },
           select: { id: true },
         });
-        const isRecovery =
-          usingRecoveryCode ||
-          (!legacyAuthorized && couple.pairingPurpose === "recovery");
+        const isRecovery = usingRecoveryCode;
         if (otherRoleSessions.length > 0 && !isRecovery) {
           return { kind: "role-taken" as const };
         }
@@ -511,40 +1091,69 @@ authRouter.post(
         if (revokedSessionIds.length > 0) {
           await tx.deviceSession.updateMany({
             where: { id: { in: revokedSessionIds }, revokedAt: null },
-            data: { revokedAt: now },
+            data: {
+              revokedAt: now,
+              lastCreateRequestHash: null,
+              lastActivationCodeHash: null,
+              lastRecoveryRotationRequestHash: null,
+            },
           });
         }
 
-        const session = existing
-          ? await tx.deviceSession.update({
-              where: { id: existing.id },
-              data: {
-                coupleId: couple.id,
-                partnerRole: requestedPartnerRole,
-                refreshTokenHash,
-                previousRefreshTokenHash: null,
-                previousRefreshValidUntil: null,
-                revokedAt: null,
-                ...metadata,
-                lastUsedAt: now,
-              },
-            })
-          : await tx.deviceSession.create({
-              data: {
-                id: createSessionId(),
-                coupleId: couple.id,
-                deviceId,
-                partnerRole: requestedPartnerRole,
-                deviceSecretHash,
-                refreshTokenHash,
-                ...metadata,
-              },
-            });
-
-        const pairedCount = await tx.deviceSession.count({
-          where: { coupleId: couple.id, revokedAt: null },
+        // Recovery or rebind must never revive an old access JWT. Replacing
+        // the row gives this binding a fresh Session id and also resets the
+        // recovery-rotation chain without making old requests valid again.
+        if (existing) {
+          await tx.deviceSession.delete({ where: { id: existing.id } });
+          revokedSessionIds.push(existing.id);
+        }
+        const session = await tx.deviceSession.create({
+          data: {
+            id: createSessionId(),
+            coupleId: couple.id,
+            deviceId,
+            partnerRole: activationRole,
+            deviceSecretHash,
+            refreshTokenHash,
+            lastActivationCodeHash: usingInvitationCode
+              ? pairingCodeHash
+              : null,
+            lastRecoveryRotationRequestHash: null,
+            ...metadata,
+          },
         });
-        if (legacyAuthorized || usingRecoveryCode) {
+
+        let recoveryCode: string;
+        if (usingRecoveryCode) {
+          recoveryCode = formatPairingCode(normalizedCode);
+        } else if (usingInvitationCode) {
+          recoveryCode = createInvitationRecoveryCode(
+            normalizedCode,
+            deviceId,
+            activationRole,
+            couple.id,
+          );
+          await storeRecoveryCode(
+            tx,
+            couple.id,
+            activationRole,
+            recoveryCode,
+          );
+        } else {
+          recoveryCode = await rotateRecoveryCode(
+            tx,
+            couple.id,
+            activationRole,
+          );
+        }
+        const boundRoleCount = await tx.partnerRecoveryCredential.count({
+          where: { coupleId: couple.id },
+        });
+        const nextStatus =
+          couple.status === "paired" || boundRoleCount >= 2
+            ? "paired"
+            : "open";
+        if (legacyAuthorized || usingInvitationCode) {
           await tx.couple.update({
             where: { id: couple.id },
             data: {
@@ -552,27 +1161,22 @@ authRouter.post(
               pairingCodeExpiresAt: null,
               pairingTargetRole: null,
               pairingPurpose: null,
-              status: pairedCount >= 2 ? "paired" : "open",
-            },
-          });
-        } else if (!couple.pairingTargetRole && pairedCount < 2) {
-          await tx.couple.update({
-            where: { id: couple.id },
-            data: {
-              pairingTargetRole: oppositePartnerRole(requestedPartnerRole),
-              pairingPurpose: "join",
-              status: "open",
+              status: nextStatus,
             },
           });
         } else {
           await tx.couple.update({
             where: { id: couple.id },
             data: {
-              pairingCodeHash: null,
-              pairingCodeExpiresAt: null,
-              pairingTargetRole: null,
-              pairingPurpose: null,
-              status: pairedCount >= 2 ? "paired" : "open",
+              status: nextStatus,
+            },
+          });
+        }
+        if (usingInvitationCode) {
+          await tx.deviceSession.updateMany({
+            where: { coupleId: couple.id, id: { not: session.id } },
+            data: {
+              lastCreateRequestHash: null,
             },
           });
         }
@@ -582,8 +1186,10 @@ authRouter.post(
           session,
           coupleId: couple.id,
           revokedSessionIds,
+          recoveryCode,
+          refreshToken,
         };
-      });
+      }, true);
 
       if (result.kind === "invalid-code") {
         await recordInvalidActivation(
@@ -599,6 +1205,14 @@ authRouter.post(
           ok: false,
           code: "INVITATION_ROLE_MISMATCH",
           message: "该邀请只允许指定的伴侣身份加入",
+        });
+        return;
+      }
+      if (result.kind === "role-required") {
+        res.status(400).json({
+          ok: false,
+          code: "PARTNER_ROLE_REQUIRED",
+          message: "旧版 shared secret 激活必须选择本人身份",
         });
         return;
       }
@@ -638,10 +1252,23 @@ authRouter.post(
           deviceId,
           result.coupleId,
           result.session.partnerRole,
-          refreshToken,
+          result.refreshToken,
         ),
+        recoveryCode: result.recoveryCode,
       });
     } catch (error) {
+      if (
+        error instanceof AuthCodeCollisionError ||
+        (error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === "P2002")
+      ) {
+        res.status(409).json({
+          ok: false,
+          code: "ACTIVATION_CODE_CONFLICT",
+          message: "激活凭证发生冲突，请重新生成邀请后重试",
+        });
+        return;
+      }
       console.error("[auth] activation failed", error);
       res.status(500).json({ ok: false, message: "设备激活失败，请重试" });
     }
@@ -733,6 +1360,8 @@ authRouter.post(
         previousRefreshValidUntil: new Date(
           Date.now() + PREVIOUS_REFRESH_GRACE_MS,
         ),
+        lastCreateRequestHash: null,
+        lastActivationCodeHash: null,
         ...metadata,
         lastUsedAt: new Date(),
       },
@@ -794,22 +1423,21 @@ authRouter.post(
     const coupleId = res.locals.auth.claims.coupleId as string;
     const partnerRole = getAuthenticatedPartnerRole(res);
     const targetRole = oppositePartnerRole(partnerRole);
-    const existingPartner = await prisma.deviceSession.findFirst({
-      where: { coupleId, partnerRole: targetRole, revokedAt: null },
-      select: { id: true },
-    });
-    const purpose = existingPartner ? "recovery" : "join";
-    const invitation = await createOrRotateInvitation(
-      coupleId,
-      targetRole,
-      purpose,
-    );
+    const invitation = await createOrRotateInvitation(coupleId, targetRole);
+    if (invitation.kind === "target-bound") {
+      res.status(409).json({
+        ok: false,
+        code: "PARTNER_ALREADY_BOUND",
+        message: "对方身份已经绑定，请让对方使用自己的成员恢复密钥",
+      });
+      return;
+    }
     res.status(201).json({
       ok: true,
       pairingCode: invitation.pairingCode,
       expiresAt: invitation.expiresAt,
       targetRole,
-      purpose,
+      purpose: "join",
     });
   },
 );
@@ -818,10 +1446,140 @@ authRouter.post(
   "/couples/recovery-code",
   requireAuth,
   coupleRateLimit("recovery-code", 5, 60 * 60 * 1000),
-  async (_req, res) => {
+  async (req, res) => {
     const coupleId = res.locals.auth.claims.coupleId as string;
-    const recoveryCode = await rotateRecoveryCode(coupleId);
-    res.status(201).json({ ok: true, recoveryCode });
+    const sessionId = res.locals.auth.claims.sessionId as string;
+    const partnerRole = getAuthenticatedPartnerRole(res);
+    const requestId = normalizeRequestId(req.body?.requestId);
+    const rawPreviousRequestId = req.body?.previousRequestId;
+    const previousRequestId =
+      rawPreviousRequestId === null || rawPreviousRequestId === undefined
+        ? null
+        : normalizeRequestId(rawPreviousRequestId);
+    if (!requestId || (rawPreviousRequestId != null && !previousRequestId)) {
+      res.status(400).json({
+        ok: false,
+        code: "INVALID_RECOVERY_ROTATION_REQUEST",
+        message: "更新恢复密钥前必须提供有效且连续的请求标识",
+      });
+      return;
+    }
+
+    const rotationRequestHash = createServerBoundHash(
+      "pairnest-recovery-rotation-request-v1",
+      requestId,
+      sessionId,
+      coupleId,
+      partnerRole,
+    );
+    const previousRotationRequestHash = previousRequestId
+      ? createServerBoundHash(
+          "pairnest-recovery-rotation-request-v1",
+          previousRequestId,
+          sessionId,
+          coupleId,
+          partnerRole,
+        )
+      : null;
+    const recoveryCode = createServerBoundPairingCode(
+      "pairnest-recovery-rotation-code-v1",
+      requestId,
+      sessionId,
+      coupleId,
+      partnerRole,
+    );
+    const recoveryCodeHash = hashPairingCode(recoveryCode);
+
+    try {
+      const result = await serializableTransaction(async (tx) => {
+        const [session, credential] = await Promise.all([
+          tx.deviceSession.findUnique({ where: { id: sessionId } }),
+          tx.partnerRecoveryCredential.findUnique({
+            where: {
+              coupleId_partnerRole: { coupleId, partnerRole },
+            },
+          }),
+        ]);
+        if (
+          !session ||
+          session.revokedAt ||
+          session.coupleId !== coupleId ||
+          session.partnerRole !== partnerRole
+        ) {
+          return { kind: "session-invalid" as const };
+        }
+
+        if (
+          session.lastRecoveryRotationRequestHash === rotationRequestHash
+        ) {
+          return credential?.codeHash === recoveryCodeHash
+            ? { kind: "success" as const }
+            : { kind: "chain-conflict" as const };
+        }
+        if (
+          session.lastRecoveryRotationRequestHash !==
+          previousRotationRequestHash
+        ) {
+          return { kind: "chain-conflict" as const };
+        }
+
+        const markerUpdated = await tx.deviceSession.updateMany({
+          where: {
+            id: sessionId,
+            revokedAt: null,
+            lastRecoveryRotationRequestHash: previousRotationRequestHash,
+          },
+          data: {
+            lastCreateRequestHash: null,
+            lastActivationCodeHash: null,
+            lastRecoveryRotationRequestHash: rotationRequestHash,
+          },
+        });
+        if (markerUpdated.count !== 1) {
+          return { kind: "chain-conflict" as const };
+        }
+        await storeRecoveryCode(
+          tx,
+          coupleId,
+          partnerRole,
+          recoveryCode,
+        );
+        return { kind: "success" as const };
+      }, true);
+
+      if (result.kind === "session-invalid") {
+        res.status(401).json({
+          ok: false,
+          code: "DEVICE_AUTHORIZATION_INVALID",
+          message: "当前设备会话已失效，请重新恢复本人身份",
+        });
+        return;
+      }
+      if (result.kind === "chain-conflict") {
+        res.status(409).json({
+          ok: false,
+          code: "RECOVERY_ROTATION_CONFLICT",
+          message: "恢复密钥更新链不一致，请退出后用本人当前恢复密钥重新确认身份",
+        });
+        return;
+      }
+      res.status(201).json({ ok: true, recoveryCode });
+    } catch (error) {
+      if (
+        error instanceof AuthCodeCollisionError ||
+        (error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === "P2002")
+      ) {
+        res.status(409).json({
+          ok: false,
+          code: "RECOVERY_ROTATION_CODE_CONFLICT",
+          message: "恢复密钥发生冲突，请重新发起更新",
+        });
+        return;
+      }
+      console.error("[auth] recovery rotation failed", error);
+      res.status(500).json({ ok: false, message: "更新恢复密钥失败，请重试" });
+    }
   },
 );
 
@@ -1003,7 +1761,12 @@ authRouter.post("/logout", requireAuth, async (_req, res) => {
   const sessionId = res.locals.auth.claims.sessionId as string;
   await prisma.deviceSession.update({
     where: { id: sessionId },
-    data: { revokedAt: new Date() },
+    data: {
+      revokedAt: new Date(),
+      lastCreateRequestHash: null,
+      lastActivationCodeHash: null,
+      lastRecoveryRotationRequestHash: null,
+    },
   });
   disconnectWebSocketSession(sessionId);
   res.json({ ok: true });

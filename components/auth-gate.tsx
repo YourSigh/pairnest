@@ -16,10 +16,11 @@ import { ThemedText } from "@/components/themed-text";
 import type { PartnerRole } from "@/constants/chat";
 import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import { useAuth } from "@/services/AuthContext";
-import type {
-  PairingPurpose,
-  PairingValidation,
-  StoredRecoveryCredential,
+import {
+  AuthApiError,
+  type PairingPurpose,
+  type PairingValidation,
+  type StoredRecoveryCredential,
 } from "@/services/AuthService";
 
 const PARTNER_OPTIONS: {
@@ -29,13 +30,13 @@ const PARTNER_OPTIONS: {
 }[] = [
   {
     value: "partnerA",
-    label: "伴侣 A",
-    description: "可编辑经期记录；绑定后不可修改",
+    label: "女方",
+    description: "可编辑经期记录，配对后不可修改",
   },
   {
     value: "partnerB",
-    label: "伴侣 B",
-    description: "经期记录只读；绑定后不可修改",
+    label: "男方",
+    description: "经期记录只读，配对后不可修改",
   },
 ];
 
@@ -69,31 +70,30 @@ function formatExpiry(value: string) {
 
 type OnboardingStep =
   | "pairing-choice"
+  | "create-role-select"
   | "create-result"
-  | "join-input"
-  | "role-select";
+  | "activation-result"
+  | "join-input";
 
 export function AuthGate({ children }: { children: ReactNode }) {
   const auth = useAuth();
   const [serverUrl, setServerUrl] = useState(auth.serverUrl ?? "");
   const [step, setStep] = useState<OnboardingStep>("pairing-choice");
-  const [coupleId, setCoupleId] = useState("");
   const [pairingCode, setPairingCode] = useState("");
   const [pairingCodeExpiresAt, setPairingCodeExpiresAt] = useState("");
   const [createdRecoveryCode, setCreatedRecoveryCode] = useState("");
   const [createdRecoveryCodeSavedLocally, setCreatedRecoveryCodeSavedLocally] =
     useState(true);
+  const [activationPurpose, setActivationPurpose] =
+    useState<PairingPurpose>("join");
+  const [pendingCreateRole, setPendingCreateRole] =
+    useState<PartnerRole | null>(null);
+  const [pendingPairingAttempt, setPendingPairingAttempt] = useState(false);
   const [storedRecoveryCredential, setStoredRecoveryCredential] =
     useState<StoredRecoveryCredential | null>(null);
-  const [pairingPurpose, setPairingPurpose] =
-    useState<PairingPurpose>("join");
   const [joinCodeInput, setJoinCodeInput] = useState("");
   const [partnerRole, setPartnerRole] =
     useState<PartnerRole>("partnerA");
-  const [availableRoles, setAvailableRoles] = useState<PartnerRole[]>([
-    "partnerA",
-    "partnerB",
-  ]);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [openCoupleCreate, setOpenCoupleCreate] = useState(false);
@@ -110,15 +110,33 @@ export function AuthGate({ children }: { children: ReactNode }) {
       return;
     }
     setStep("pairing-choice");
-    setCoupleId("");
     setPairingCode("");
     setPairingCodeExpiresAt("");
     setCreatedRecoveryCode("");
     setCreatedRecoveryCodeSavedLocally(true);
-    setPairingPurpose("join");
+    setActivationPurpose("join");
+    setPendingCreateRole(null);
+    setPendingPairingAttempt(false);
     setJoinCodeInput("");
     setMessage(null);
   }, [auth.status]);
+
+  useEffect(() => {
+    const confirmation = auth.pendingConfirmation;
+    if (auth.status !== "unauthenticated" || !confirmation) return;
+    setPartnerRole(confirmation.partnerRole);
+    setCreatedRecoveryCode(formatPairingCodeInput(confirmation.recoveryCode));
+    setCreatedRecoveryCodeSavedLocally(confirmation.savedLocally);
+    setMessage(null);
+    if (confirmation.kind === "create") {
+      setPairingCode(formatPairingCodeInput(confirmation.pairingCode));
+      setPairingCodeExpiresAt(confirmation.expiresAt);
+      setStep("create-result");
+      return;
+    }
+    setActivationPurpose(confirmation.purpose);
+    setStep("activation-result");
+  }, [auth.pendingConfirmation, auth.status]);
 
   useEffect(() => {
     if (auth.status !== "unauthenticated") {
@@ -136,6 +154,31 @@ export function AuthGate({ children }: { children: ReactNode }) {
       })
       .catch(() => {
         if (!cancelled) setStoredRecoveryCredential(null);
+      });
+    void auth
+      .getPendingCoupleCreatePartnerRole()
+      .then((role) => {
+        if (!cancelled) {
+          setPendingCreateRole(role);
+          if (role) setPartnerRole(role);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setPendingCreateRole(null);
+      });
+    void auth
+      .getPendingPairingAttempt()
+      .then((pending) => {
+        if (cancelled || auth.pendingConfirmation) return;
+        setPendingPairingAttempt(Boolean(pending));
+        if (!pending) return;
+        setPartnerRole(pending.partnerRole);
+        setActivationPurpose(pending.purpose);
+        setJoinCodeInput(formatPairingCodeInput(pending.pairingCode));
+        setStep("join-input");
+      })
+      .catch(() => {
+        if (!cancelled) setPendingPairingAttempt(false);
       });
     void auth
       .getAuthCapabilities()
@@ -187,23 +230,30 @@ export function AuthGate({ children }: { children: ReactNode }) {
     try {
       setSubmitting(true);
       setMessage(null);
-      const created = await auth.createCouple();
-      setCoupleId(created.coupleId);
-      setPairingCode(created.pairingCode);
+      const created = await auth.createCouple(partnerRole);
+      setPairingCode(formatPairingCodeInput(created.pairingCode));
       setPairingCodeExpiresAt(created.expiresAt);
-      setCreatedRecoveryCode(created.recoveryCode);
+      setCreatedRecoveryCode(formatPairingCodeInput(created.recoveryCode));
       setCreatedRecoveryCodeSavedLocally(created.savedLocally);
+      setPendingCreateRole(null);
       if (created.savedLocally && auth.serverUrl) {
         setStoredRecoveryCredential({
           serverUrl: auth.serverUrl,
           coupleId: created.coupleId,
+          partnerRole: created.partnerRole,
           recoveryCode: created.recoveryCode,
+          lastRotationRequestId: null,
         });
       }
-      setPairingPurpose("join");
-      setAvailableRoles(["partnerA", "partnerB"]);
       setStep("create-result");
     } catch (error) {
+      void auth
+        .getPendingCoupleCreatePartnerRole()
+        .then((role) => {
+          setPendingCreateRole(role);
+          if (role) setPartnerRole(role);
+        })
+        .catch(() => undefined);
       setMessage(
         error instanceof Error ? error.message : "创建邀请密钥失败，请重试",
       );
@@ -212,22 +262,21 @@ export function AuthGate({ children }: { children: ReactNode }) {
     }
   };
 
-  const continueWithPairingValidation = (
+  const activateValidatedPairing = async (
     result: PairingValidation,
     code: string,
   ) => {
-    if (result.availableRoles.length === 0) {
-      setMessage("这对情侣空间已经绑定满两位成员");
-      return false;
-    }
-    setCoupleId(result.coupleId);
-    setPairingCode(code);
-    setPairingCodeExpiresAt(result.expiresAt ?? "");
-    setPairingPurpose(result.purpose);
-    setAvailableRoles(result.availableRoles);
-    setPartnerRole(result.availableRoles[0]);
-    setStep("role-select");
-    return true;
+    const activated = await auth.activate(
+      result.coupleId,
+      code,
+      result.partnerRole,
+      result.purpose,
+    );
+    setPartnerRole(activated.partnerRole);
+    setActivationPurpose(activated.purpose);
+    setCreatedRecoveryCode(formatPairingCodeInput(activated.recoveryCode));
+    setCreatedRecoveryCodeSavedLocally(activated.savedLocally);
+    setStep("activation-result");
   };
 
   const handleValidateJoinCode = async () => {
@@ -241,8 +290,12 @@ export function AuthGate({ children }: { children: ReactNode }) {
       setSubmitting(true);
       setMessage(null);
       const result = await auth.validatePairingCode(value);
-      continueWithPairingValidation(result, value);
+      await activateValidatedPairing(result, value);
     } catch (error) {
+      void auth
+        .getPendingPairingAttempt()
+        .then((pending) => setPendingPairingAttempt(Boolean(pending)))
+        .catch(() => undefined);
       setMessage(
         error instanceof Error ? error.message : "邀请或恢复密钥无效，请重试",
       );
@@ -261,37 +314,44 @@ export function AuthGate({ children }: { children: ReactNode }) {
       );
       if (
         result.coupleId !== storedRecoveryCredential.coupleId ||
-        result.purpose !== "recovery"
+        result.purpose !== "recovery" ||
+        result.partnerRole !== storedRecoveryCredential.partnerRole
       ) {
-        setMessage("本机恢复凭证与当前服务器返回的空间不匹配");
+        await auth.clearPendingPairingAttempt();
+        setMessage("本机恢复凭证与服务器确认的成员身份不匹配");
         return;
       }
-      continueWithPairingValidation(
+      await activateValidatedPairing(
         result,
         storedRecoveryCredential.recoveryCode,
       );
     } catch (error) {
+      void auth
+        .getPendingPairingAttempt()
+        .then((pending) => setPendingPairingAttempt(Boolean(pending)))
+        .catch(() => undefined);
+      const savedCredentialInvalid =
+        error instanceof AuthApiError &&
+        (error.code === "INVALID_PAIRING_CODE" ||
+          error.code === "PAIRING_CODE_NOT_FOUND");
       setMessage(
-        error instanceof Error
+        savedCredentialInvalid
+          ? "本机恢复密钥已失效，请使用本人另存的密钥，或在本人仍登录的旧设备中更新恢复密钥"
+          : error instanceof Error
           ? error.message
-          : "本机保存的恢复密钥已失效，请向伴侣获取新的恢复邀请",
+          : "无法使用本机恢复密钥，请稍后重试",
       );
     } finally {
       setSubmitting(false);
     }
   };
 
-  const handleActivate = async () => {
-    if (!coupleId || !pairingCode || submitting) return;
-    if (!availableRoles.includes(partnerRole)) {
-      setMessage("该身份已被另一位伴侣占用，请选择另一个身份");
-      return;
-    }
-
+  const handleCompleteCreatedCouple = async () => {
+    if (submitting) return;
     try {
       setSubmitting(true);
       setMessage(null);
-      await auth.activate(coupleId, pairingCode, partnerRole);
+      await auth.completePendingAuthentication();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "进入失败，请重试");
     } finally {
@@ -327,13 +387,13 @@ export function AuthGate({ children }: { children: ReactNode }) {
       await auth.clearServer();
       setServerUrl("");
       setJoinCodeInput("");
-      setCoupleId("");
       setPairingCode("");
       setPairingCodeExpiresAt("");
       setCreatedRecoveryCode("");
       setCreatedRecoveryCodeSavedLocally(true);
       setStoredRecoveryCredential(null);
-      setPairingPurpose("join");
+      setPendingCreateRole(null);
+      setActivationPurpose("join");
       setStep("pairing-choice");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "无法清除服务配置");
@@ -396,11 +456,13 @@ export function AuthGate({ children }: { children: ReactNode }) {
                   ? "开始你们的双栖空间"
                   : step === "create-result"
                     ? "邀请密钥已创建"
-                    : step === "join-input"
-                      ? "加入情侣空间"
-                      : pairingPurpose === "recovery"
-                        ? "选择要恢复的身份"
-                        : "选择你的身份"}
+                    : step === "activation-result"
+                      ? activationPurpose === "recovery"
+                        ? "身份恢复成功"
+                        : "配对成功"
+                      : step === "join-input"
+                        ? "加入情侣空间"
+                        : "先选择你的身份"}
             </ThemedText>
 
             {auth.status === "configuration-required" ? (
@@ -456,15 +518,20 @@ export function AuthGate({ children }: { children: ReactNode }) {
                   {auth.serverUrl}
                 </ThemedText>
                 <ThemedText style={styles.hint}>
-                  {openCoupleCreate
+                  {pendingCreateRole
+                    ? `检测到上次以${pendingCreateRole === "partnerA" ? "女方" : "男方"}身份发出的创建请求，请继续完成，避免重复创建情侣空间。`
+                    : openCoupleCreate
                     ? "第一次进入时，可以创建情侣空间，或使用另一位伴侣分享的邀请或恢复密钥加入。"
                     : "此实例已关闭公开创建。请使用另一位伴侣分享的邀请或恢复密钥加入。"}
                 </ThemedText>
-                {openCoupleCreate ? (
+                {openCoupleCreate || pendingCreateRole ? (
                   <TouchableOpacity
                     style={styles.choiceButton}
                     disabled={submitting}
-                    onPress={() => void handleCreateCouple()}
+                    onPress={() => {
+                      setMessage(null);
+                      setStep("create-role-select");
+                    }}
                   >
                     <Ionicons
                       name="key-outline"
@@ -473,10 +540,12 @@ export function AuthGate({ children }: { children: ReactNode }) {
                     />
                     <View style={styles.choiceCopy}>
                       <ThemedText style={styles.choiceTitle}>
-                        创建邀请密钥
+                        {pendingCreateRole ? "继续上次创建" : "创建邀请密钥"}
                       </ThemedText>
                       <ThemedText style={styles.choiceDescription}>
-                        生成密钥后发给另一位伴侣加入
+                        {pendingCreateRole
+                          ? "沿用原请求安全取回已生成的密钥"
+                          : "生成密钥后发给另一位伴侣加入"}
                       </ThemedText>
                     </View>
                   </TouchableOpacity>
@@ -546,7 +615,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
             ) : step === "create-result" ? (
               <>
                 <ThemedText style={styles.hint}>
-                  把下面的邀请密钥发给另一位伴侣。你接下来需要先选择自己的身份。
+                  你已经绑定为
+                  {partnerRole === "partnerA" ? "女方" : "男方"}。把下面的邀请密钥发给另一位伴侣，对方输入后会自动绑定为
+                  {partnerRole === "partnerA" ? "男方" : "女方"}。
                 </ThemedText>
                 <ThemedText style={styles.codeLabel}>一次性邀请密钥</ThemedText>
                 <View style={styles.codeBox}>
@@ -568,7 +639,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
                     复制邀请密钥
                   </ThemedText>
                 </TouchableOpacity>
-                <ThemedText style={styles.codeLabel}>永久恢复密钥</ThemedText>
+                <ThemedText style={styles.codeLabel}>
+                  我的永久恢复密钥
+                </ThemedText>
                 <View style={styles.codeBox}>
                   <ThemedText selectable style={styles.codeText}>
                     {createdRecoveryCode}
@@ -599,17 +672,79 @@ export function AuthGate({ children }: { children: ReactNode }) {
                 <TouchableOpacity
                   style={styles.primaryButton}
                   disabled={submitting}
-                  onPress={() => setStep("role-select")}
+                  onPress={() => void handleCompleteCreatedCouple()}
                 >
-                  <ThemedText style={styles.primaryButtonText}>
-                    继续选择身份
+                  {submitting ? (
+                    <ActivityIndicator size="small" color={AppColors.white} />
+                  ) : (
+                    <ThemedText style={styles.primaryButtonText}>
+                      进入 PairNest
+                    </ThemedText>
+                  )}
+                </TouchableOpacity>
+              </>
+            ) : step === "activation-result" ? (
+              <>
+                <ThemedText style={styles.hint}>
+                  服务器已确认你是
+                  {partnerRole === "partnerA" ? "女方" : "男方"}。下面是只属于这个身份的恢复密钥，不能用于恢复另一位伴侣。
+                </ThemedText>
+                <ThemedText style={styles.codeLabel}>
+                  我的永久恢复密钥
+                </ThemedText>
+                <View style={styles.codeBox}>
+                  <ThemedText selectable style={styles.codeText}>
+                    {createdRecoveryCode}
                   </ThemedText>
+                </View>
+                <ThemedText
+                  style={
+                    createdRecoveryCodeSavedLocally
+                      ? styles.recoverySaveNotice
+                      : styles.recoverySaveError
+                  }
+                >
+                  {createdRecoveryCodeSavedLocally
+                    ? "恢复密钥已安全保存在本机。仍建议复制到可信的密码管理器，以便换机恢复。"
+                    : "本机安全存储失败。请先复制并妥善保管；离开此页面后，密钥可能无法找回。"}
+                </ThemedText>
+                <TouchableOpacity
+                  style={styles.secondaryButton}
+                  disabled={submitting}
+                  onPress={() => void handleCopyCreatedRecoveryCode()}
+                >
+                  <ThemedText style={styles.secondaryButtonText}>
+                    复制我的恢复密钥
+                  </ThemedText>
+                </TouchableOpacity>
+                {message ? (
+                  <ThemedText style={styles.feedbackText}>{message}</ThemedText>
+                ) : null}
+                <TouchableOpacity
+                  style={[
+                    styles.primaryButton,
+                    submitting && styles.buttonDisabled,
+                  ]}
+                  disabled={submitting}
+                  onPress={() => void handleCompleteCreatedCouple()}
+                >
+                  {submitting ? (
+                    <ActivityIndicator size="small" color={AppColors.white} />
+                  ) : (
+                    <ThemedText style={styles.primaryButtonText}>
+                      {createdRecoveryCodeSavedLocally
+                        ? "继续进入 PairNest"
+                        : "我已妥善保存，继续进入"}
+                    </ThemedText>
+                  )}
                 </TouchableOpacity>
               </>
             ) : step === "join-input" ? (
               <>
                 <ThemedText style={styles.hint}>
-                  输入对方分享的 26 位邀请密钥或永久恢复密钥，可直接粘贴带分组横线的格式。
+                  {pendingPairingAttempt
+                    ? "检测到上次尚未完成的配对或恢复，密钥已从本机安全存储中填入，请继续重试。"
+                    : "输入对方分享的 26 位邀请密钥或永久恢复密钥，可直接粘贴带分组横线的格式。"}
                 </ThemedText>
                 <TextInput
                   value={joinCodeInput}
@@ -623,7 +758,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
                   autoCapitalize="characters"
                   autoCorrect={false}
                   maxLength={30}
-                  editable={!submitting}
+                  editable={!submitting && !pendingPairingAttempt}
                   returnKeyType="done"
                   onSubmitEditing={() => void handleValidateJoinCode()}
                 />
@@ -648,7 +783,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
                     <ActivityIndicator size="small" color={AppColors.white} />
                   ) : (
                     <ThemedText style={styles.primaryButtonText}>
-                      验证并继续
+                      {pendingPairingAttempt ? "继续上次操作" : "验证并继续"}
                     </ThemedText>
                   )}
                 </TouchableOpacity>
@@ -666,14 +801,16 @@ export function AuthGate({ children }: { children: ReactNode }) {
             ) : (
               <>
                 <ThemedText style={styles.hint}>
-                  {pairingPurpose === "recovery"
-                    ? "请选择要在这台设备恢复的身份。恢复成功后，该身份的旧设备会退出。"
-                    : "请选择你在情侣关系中的身份。身份一经绑定，不能修改。"}
+                  {pendingCreateRole
+                    ? `上一次以${pendingCreateRole === "partnerA" ? "女方" : "男方"}身份发出的创建请求尚未确认。为避免重复创建空间，本次必须保持相同身份重试。`
+                    : "创建前先选择你的身份。服务端会立即绑定，随后生成的邀请密钥只允许另一位伴侣加入。"}
                 </ThemedText>
                 <View style={styles.partnerOptions}>
                   {PARTNER_OPTIONS.map((option) => {
-                    const disabled = !availableRoles.includes(option.value);
                     const selected = partnerRole === option.value;
+                    const disabled = Boolean(
+                      pendingCreateRole && pendingCreateRole !== option.value,
+                    );
                     return (
                       <TouchableOpacity
                         key={option.value}
@@ -696,7 +833,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
                           </ThemedText>
                           <ThemedText style={styles.partnerDescription}>
                             {disabled
-                              ? "该身份已被另一位伴侣占用"
+                              ? "已有另一身份的未完成创建请求"
                               : option.description}
                           </ThemedText>
                         </View>
@@ -711,8 +848,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
                             disabled
                               ? AppColors.textTertiary
                               : selected
-                                ? AppColors.primary
-                                : AppColors.textTertiary
+                              ? AppColors.primary
+                              : AppColors.textTertiary
                           }
                         />
                       </TouchableOpacity>
@@ -728,13 +865,13 @@ export function AuthGate({ children }: { children: ReactNode }) {
                     submitting && styles.buttonDisabled,
                   ]}
                   disabled={submitting}
-                  onPress={() => void handleActivate()}
+                  onPress={() => void handleCreateCouple()}
                 >
                   {submitting ? (
                     <ActivityIndicator size="small" color={AppColors.white} />
                   ) : (
                     <ThemedText style={styles.primaryButtonText}>
-                      进入 PairNest
+                      创建情侣空间
                     </ThemedText>
                   )}
                 </TouchableOpacity>
@@ -743,21 +880,13 @@ export function AuthGate({ children }: { children: ReactNode }) {
                   disabled={submitting}
                   onPress={() => {
                     setMessage(null);
-                    setStep(
-                      pairingCode && step === "role-select" && joinCodeInput
-                        ? "join-input"
-                        : pairingCode
-                          ? "create-result"
-                          : "pairing-choice",
-                    );
+                    setStep("pairing-choice");
                   }}
                 >
                   <ThemedText style={styles.secondaryButtonText}>返回</ThemedText>
                 </TouchableOpacity>
                 <ThemedText style={styles.footerText}>
-                  {pairingPurpose === "recovery"
-                    ? "恢复密钥长期有效，请勿发送给不可信的人。"
-                    : "邀请密钥仅用于本次加入，24 小时后失效。"}
+                  创建后身份不可互换；另一位伴侣将自动使用相反身份。
                 </ThemedText>
               </>
             )}

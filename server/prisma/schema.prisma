@@ -15,7 +15,6 @@ enum PartnerRole {
 model Couple {
   id                        String                         @id @db.VarChar(64)
   pairingCodeHash           String?                        @unique @db.VarChar(64)
-  recoveryCodeHash          String?                        @unique @db.VarChar(64)
   pairingCodeExpiresAt      DateTime?
   pairingTargetRole         PartnerRole?
   pairingPurpose            String?                        @db.VarChar(16)
@@ -43,6 +42,7 @@ model Couple {
   aiMemories                AiMemory[]
   memoryReports             MemoryReport[]
   deviceSessions            DeviceSession[]
+  recoveryCredentials       PartnerRecoveryCredential[]
   ticTacToeGame             VanishingTicTacToeGame?
   drawGuessRounds           DrawGuessRound[]
   drawGuessAttempts         DrawGuessAttempt[]
@@ -56,6 +56,17 @@ model Couple {
   petFacilities             PetFacility[]
   storageReservations       StorageReservation[]
   webSocketConnectionLeases WebSocketConnectionLease[]
+}
+
+model PartnerRecoveryCredential {
+  coupleId    String      @db.VarChar(64)
+  partnerRole PartnerRole
+  codeHash    String?     @unique @db.VarChar(64)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  couple      Couple      @relation(fields: [coupleId], references: [id], onDelete: Cascade)
+
+  @@id([coupleId, partnerRole])
 }
 
 model ApiRateLimitBucket {
@@ -504,6 +515,12 @@ model DeviceSession {
   refreshTokenHash          String                     @unique @db.VarChar(64)
   previousRefreshTokenHash  String?                    @db.VarChar(64)
   previousRefreshValidUntil DateTime?
+  /// Lifecycle marker for replaying a committed create response. Cleared by a later authenticated lifecycle action.
+  lastCreateRequestHash     String?                    @db.VarChar(64)
+  /// Lifecycle marker for replaying a consumed invitation on the same authenticated device.
+  lastActivationCodeHash    String?                    @db.VarChar(64)
+  /// Chains idempotent recovery-key rotations for this authenticated device session.
+  lastRecoveryRotationRequestHash String?              @db.VarChar(64)
   deviceName                String?                    @db.VarChar(128)
   platform                  String?                    @db.VarChar(32)
   osVersion                 String?                    @db.VarChar(64)
@@ -633,7 +650,7 @@ model TruthOrDareQuestion {
 model CouplePet {
   id                    Int                @id @default(autoincrement())
   coupleId              String             @unique @db.VarChar(64)
-  name                  String             @default("团团") @db.VarChar(24)
+  name                  String             @default("小栖") @db.VarChar(24)
   species               String             @default("samoyed") @db.VarChar(24)
   level                 Int                @default(1)
   experience            Int                @default(0)

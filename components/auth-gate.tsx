@@ -14,6 +14,10 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { ThemedText } from "@/components/themed-text";
 import type { PartnerRole } from "@/constants/chat";
+import {
+  normalizePartnerNickname,
+  PARTNER_NICKNAME_MAX_LENGTH,
+} from "@/constants/chat";
 import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import { useAuth } from "@/services/AuthContext";
 import {
@@ -39,6 +43,14 @@ const PARTNER_OPTIONS: {
     description: "经期记录只读，配对后不可修改",
   },
 ];
+
+function oppositeRoleLabel(role: PartnerRole) {
+  return role === "partnerA" ? "男方" : "女方";
+}
+
+function partnerNicknameHint(role: PartnerRole) {
+  return `你怎么称呼${oppositeRoleLabel(role)}？比如小名、昵称`;
+}
 
 const PAIRING_CODE_LENGTH = 26;
 
@@ -73,7 +85,8 @@ type OnboardingStep =
   | "create-role-select"
   | "create-result"
   | "activation-result"
-  | "join-input";
+  | "join-input"
+  | "join-nickname";
 
 export function AuthGate({ children }: { children: ReactNode }) {
   const auth = useAuth();
@@ -92,6 +105,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [storedRecoveryCredential, setStoredRecoveryCredential] =
     useState<StoredRecoveryCredential | null>(null);
   const [joinCodeInput, setJoinCodeInput] = useState("");
+  const [partnerNickname, setPartnerNickname] = useState("");
+  const [pendingJoinValidation, setPendingJoinValidation] =
+    useState<PairingValidation | null>(null);
   const [partnerRole, setPartnerRole] =
     useState<PartnerRole>("partnerA");
   const [submitting, setSubmitting] = useState(false);
@@ -118,6 +134,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
     setPendingCreateRole(null);
     setPendingPairingAttempt(false);
     setJoinCodeInput("");
+    setPartnerNickname("");
+    setPendingJoinValidation(null);
     setMessage(null);
   }, [auth.status]);
 
@@ -227,10 +245,17 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   const handleCreateCouple = async () => {
     if (submitting) return;
+    const nickname = normalizePartnerNickname(partnerNickname);
+    if (!nickname) {
+      setMessage(
+        `请填写对对方的称呼，最多 ${PARTNER_NICKNAME_MAX_LENGTH} 个字`,
+      );
+      return;
+    }
     try {
       setSubmitting(true);
       setMessage(null);
-      const created = await auth.createCouple(partnerRole);
+      const created = await auth.createCouple(partnerRole, nickname);
       setPairingCode(formatPairingCodeInput(created.pairingCode));
       setPairingCodeExpiresAt(created.expiresAt);
       setCreatedRecoveryCode(formatPairingCodeInput(created.recoveryCode));
@@ -265,17 +290,21 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const activateValidatedPairing = async (
     result: PairingValidation,
     code: string,
+    nickname?: string,
   ) => {
     const activated = await auth.activate(
       result.coupleId,
       code,
       result.partnerRole,
       result.purpose,
+      nickname,
     );
     setPartnerRole(activated.partnerRole);
     setActivationPurpose(activated.purpose);
     setCreatedRecoveryCode(formatPairingCodeInput(activated.recoveryCode));
     setCreatedRecoveryCodeSavedLocally(activated.savedLocally);
+    setPendingJoinValidation(null);
+    setPartnerNickname("");
     setStep("activation-result");
   };
 
@@ -290,6 +319,13 @@ export function AuthGate({ children }: { children: ReactNode }) {
       setSubmitting(true);
       setMessage(null);
       const result = await auth.validatePairingCode(value);
+      setPartnerRole(result.partnerRole);
+      setActivationPurpose(result.purpose);
+      if (result.purpose === "join") {
+        setPendingJoinValidation(result);
+        setStep("join-nickname");
+        return;
+      }
       await activateValidatedPairing(result, value);
     } catch (error) {
       void auth
@@ -298,6 +334,36 @@ export function AuthGate({ children }: { children: ReactNode }) {
         .catch(() => undefined);
       setMessage(
         error instanceof Error ? error.message : "邀请或恢复密钥无效，请重试",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleJoinWithNickname = async () => {
+    if (!pendingJoinValidation || submitting) return;
+    const nickname = normalizePartnerNickname(partnerNickname);
+    if (!nickname) {
+      setMessage(
+        `请填写对对方的称呼，最多 ${PARTNER_NICKNAME_MAX_LENGTH} 个字`,
+      );
+      return;
+    }
+    try {
+      setSubmitting(true);
+      setMessage(null);
+      await activateValidatedPairing(
+        pendingJoinValidation,
+        joinCodeInput,
+        nickname,
+      );
+    } catch (error) {
+      void auth
+        .getPendingPairingAttempt()
+        .then((pending) => setPendingPairingAttempt(Boolean(pending)))
+        .catch(() => undefined);
+      setMessage(
+        error instanceof Error ? error.message : "加入情侣空间失败，请重试",
       );
     } finally {
       setSubmitting(false);
@@ -798,12 +864,72 @@ export function AuthGate({ children }: { children: ReactNode }) {
                   <ThemedText style={styles.secondaryButtonText}>返回</ThemedText>
                 </TouchableOpacity>
               </>
+            ) : step === "join-nickname" ? (
+              <>
+                <ThemedText style={styles.hint}>
+                  密钥有效。你将绑定为
+                  {partnerRole === "partnerA" ? "女方" : "男方"}，请先填写对
+                  {oppositeRoleLabel(partnerRole)}
+                  的称呼，之后聊天、打卡等地方都会这样称呼对方。
+                </ThemedText>
+                <TextInput
+                  value={partnerNickname}
+                  onChangeText={(value) => {
+                    setPartnerNickname(value);
+                    if (message) setMessage(null);
+                  }}
+                  style={[styles.input, styles.nicknameInput]}
+                  placeholder={partnerNicknameHint(partnerRole)}
+                  placeholderTextColor={AppColors.textTertiary}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  maxLength={PARTNER_NICKNAME_MAX_LENGTH}
+                  editable={!submitting}
+                  returnKeyType="done"
+                  onSubmitEditing={() => void handleJoinWithNickname()}
+                />
+                {message ? (
+                  <ThemedText style={styles.errorText}>{message}</ThemedText>
+                ) : null}
+                <TouchableOpacity
+                  style={[
+                    styles.primaryButton,
+                    (!normalizePartnerNickname(partnerNickname) ||
+                      submitting) &&
+                      styles.buttonDisabled,
+                  ]}
+                  disabled={
+                    !normalizePartnerNickname(partnerNickname) || submitting
+                  }
+                  onPress={() => void handleJoinWithNickname()}
+                >
+                  {submitting ? (
+                    <ActivityIndicator size="small" color={AppColors.white} />
+                  ) : (
+                    <ThemedText style={styles.primaryButtonText}>
+                      确认加入
+                    </ThemedText>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.secondaryButton}
+                  disabled={submitting}
+                  onPress={() => {
+                    setMessage(null);
+                    setPartnerNickname("");
+                    setPendingJoinValidation(null);
+                    setStep("join-input");
+                  }}
+                >
+                  <ThemedText style={styles.secondaryButtonText}>返回</ThemedText>
+                </TouchableOpacity>
+              </>
             ) : (
               <>
                 <ThemedText style={styles.hint}>
                   {pendingCreateRole
                     ? `上一次以${pendingCreateRole === "partnerA" ? "女方" : "男方"}身份发出的创建请求尚未确认。为避免重复创建空间，本次必须保持相同身份重试。`
-                    : "创建前先选择你的身份。服务端会立即绑定，随后生成的邀请密钥只允许另一位伴侣加入。"}
+                    : "创建前先选择你的身份，并填写对对方的称呼。服务端会立即绑定，随后生成的邀请密钥只允许另一位伴侣加入。"}
                 </ThemedText>
                 <View style={styles.partnerOptions}>
                   {PARTNER_OPTIONS.map((option) => {
@@ -856,15 +982,38 @@ export function AuthGate({ children }: { children: ReactNode }) {
                     );
                   })}
                 </View>
+                <ThemedText style={styles.fieldLabel}>
+                  对{oppositeRoleLabel(partnerRole)}的称呼
+                </ThemedText>
+                <TextInput
+                  value={partnerNickname}
+                  onChangeText={(value) => {
+                    setPartnerNickname(value);
+                    if (message) setMessage(null);
+                  }}
+                  style={[styles.input, styles.nicknameInput]}
+                  placeholder={partnerNicknameHint(partnerRole)}
+                  placeholderTextColor={AppColors.textTertiary}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  maxLength={PARTNER_NICKNAME_MAX_LENGTH}
+                  editable={!submitting}
+                  returnKeyType="done"
+                  onSubmitEditing={() => void handleCreateCouple()}
+                />
                 {message ? (
                   <ThemedText style={styles.errorText}>{message}</ThemedText>
                 ) : null}
                 <TouchableOpacity
                   style={[
                     styles.primaryButton,
-                    submitting && styles.buttonDisabled,
+                    (!normalizePartnerNickname(partnerNickname) ||
+                      submitting) &&
+                      styles.buttonDisabled,
                   ]}
-                  disabled={submitting}
+                  disabled={
+                    !normalizePartnerNickname(partnerNickname) || submitting
+                  }
                   onPress={() => void handleCreateCouple()}
                 >
                   {submitting ? (
@@ -880,6 +1029,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
                   disabled={submitting}
                   onPress={() => {
                     setMessage(null);
+                    setPartnerNickname("");
                     setStep("pairing-choice");
                   }}
                 >
@@ -973,6 +1123,17 @@ const styles = createThemedStyleSheet({
     fontSize: 16,
     color: AppColors.text,
     backgroundColor: AppColors.background,
+  },
+  nicknameInput: {
+    marginBottom: 14,
+  },
+  fieldLabel: {
+    alignSelf: "stretch",
+    marginTop: 4,
+    marginBottom: 8,
+    fontSize: 13,
+    fontWeight: "600",
+    color: AppColors.textSecondary,
   },
   choiceButton: {
     width: "100%",

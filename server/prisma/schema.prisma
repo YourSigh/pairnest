@@ -19,6 +19,8 @@ model Couple {
   pairingTargetRole         PartnerRole?
   pairingPurpose            String?                        @db.VarChar(16)
   status                    String                         @default("open") @db.VarChar(16)
+  partnerANickname          String?                        @db.VarChar(32)
+  partnerBNickname          String?                        @db.VarChar(32)
   deletionRequestedBy       PartnerRole?
   deletionRequestedAt       DateTime?
   createdAt                 DateTime                       @default(now())

@@ -10,6 +10,7 @@ import {
   Linking,
   Platform,
   ScrollView,
+  TextInput,
   TouchableOpacity,
   type StyleProp,
   View,
@@ -21,6 +22,11 @@ import { AppBackButton } from "@/components/app-back-button";
 import { AppAlert } from "@/components/app-dialog";
 import { ThemedText } from "@/components/themed-text";
 import { useToast } from "@/components/toast";
+import {
+  normalizePartnerNickname,
+  oppositePartnerRole,
+  PARTNER_NICKNAME_MAX_LENGTH,
+} from "@/constants/chat";
 import {
   APP_NAVIGATION_ITEMS,
   type AppNavigationId,
@@ -58,6 +64,7 @@ import {
   NotificationService,
 } from "@/services/NotificationService";
 import { NavigationLayoutStorage } from "@/services/NavigationLayoutStorage";
+import { usePartnerNames } from "@/services/PartnerNamesContext";
 import {
   TimelineThemeMode,
   TimelineThemeStorage,
@@ -136,6 +143,8 @@ export function SettingsPanel({
   const router = useRouter();
   const toast = useToast();
   const auth = useAuth();
+  const { updatePartnerNickname, refresh: refreshPartnerNames } =
+    usePartnerNames();
   const [backgroundUri, setBackgroundUri] = useState<string | null>(null);
   const [readReceiptDisplayEnabled, setReadReceiptDisplayEnabled] =
     useState(false);
@@ -172,6 +181,8 @@ export function SettingsPanel({
   const [recoveryCodeSaveWarning, setRecoveryCodeSaveWarning] = useState(false);
   const [deletionLoading, setDeletionLoading] = useState(false);
   const [serverChangeLoading, setServerChangeLoading] = useState(false);
+  const [partnerNicknameDraft, setPartnerNicknameDraft] = useState("");
+  const [partnerNicknameSaving, setPartnerNicknameSaving] = useState(false);
   const installedVersion = getInstalledVersionInfo();
 
   const handleClose = useCallback(() => {
@@ -235,6 +246,14 @@ export function SettingsPanel({
           setCoupleStatus(status);
           setStoredRecoveryCode(recoveryCode);
           setRecoveryCodeSaveWarning(false);
+          if (auth.partnerRole) {
+            const opposite = oppositePartnerRole(auth.partnerRole);
+            const nicknameField =
+              opposite === "partnerA"
+                ? status.partnerANickname
+                : status.partnerBNickname;
+            setPartnerNicknameDraft(nicknameField?.trim() || "");
+          }
         }
       } catch {
         if (!cancelled) {
@@ -495,7 +514,43 @@ export function SettingsPanel({
   const refreshCoupleStatus = async () => {
     const status = await auth.getCoupleStatus();
     setCoupleStatus(status);
+    if (auth.partnerRole) {
+      const opposite = oppositePartnerRole(auth.partnerRole);
+      const nicknameField =
+        opposite === "partnerA"
+          ? status.partnerANickname
+          : status.partnerBNickname;
+      setPartnerNicknameDraft(nicknameField?.trim() || "");
+    }
     return status;
+  };
+
+  const handleSavePartnerNickname = async () => {
+    if (partnerNicknameSaving || !auth.partnerRole) return;
+    const nickname = normalizePartnerNickname(partnerNicknameDraft);
+    if (!nickname) {
+      toast.show({
+        message: `请填写对对方的称呼，最多 ${PARTNER_NICKNAME_MAX_LENGTH} 个字`,
+        icon: "alert-circle",
+      });
+      return;
+    }
+    try {
+      setPartnerNicknameSaving(true);
+      await updatePartnerNickname(nickname);
+      setPartnerNicknameDraft(nickname);
+      await refreshCoupleStatus();
+      await refreshPartnerNames();
+      toast.show({ message: "对方称呼已更新", icon: "checkmark-circle" });
+    } catch (error) {
+      toast.show({
+        message:
+          error instanceof Error ? error.message : "更新对方称呼失败，请重试",
+        icon: "alert-circle",
+      });
+    } finally {
+      setPartnerNicknameSaving(false);
+    }
   };
 
   const handleCreateInvitation = async () => {
@@ -1414,6 +1469,50 @@ export function SettingsPanel({
           邀请另一位伴侣首次加入；换机时请使用自己身份的恢复密钥。
         </ThemedText>
         <View style={styles.card}>
+          <View style={[styles.nicknameBlock, styles.optionRowBorder]}>
+            <ThemedText style={styles.optionLabel}>对对方的称呼</ThemedText>
+            <ThemedText style={styles.settingStatus}>
+              {auth.partnerRole
+                ? `当前身份是${partnerRoleLabel(auth.partnerRole)}，这里填写你对${partnerRoleLabel(
+                    oppositePartnerRole(auth.partnerRole),
+                  )}的称呼`
+                : "填写后会显示在聊天、打卡等地方"}
+            </ThemedText>
+            <TextInput
+              value={partnerNicknameDraft}
+              onChangeText={setPartnerNicknameDraft}
+              style={styles.nicknameInput}
+              placeholder="例如小名、昵称"
+              placeholderTextColor={AppColors.textTertiary}
+              autoCapitalize="none"
+              autoCorrect={false}
+              maxLength={PARTNER_NICKNAME_MAX_LENGTH}
+              editable={!partnerNicknameSaving}
+            />
+            <TouchableOpacity
+              style={[
+                styles.nicknameSaveButton,
+                (!normalizePartnerNickname(partnerNicknameDraft) ||
+                  partnerNicknameSaving) &&
+                  styles.nicknameSaveButtonDisabled,
+              ]}
+              disabled={
+                !normalizePartnerNickname(partnerNicknameDraft) ||
+                partnerNicknameSaving
+              }
+              onPress={() => void handleSavePartnerNickname()}
+              activeOpacity={0.75}
+            >
+              {partnerNicknameSaving ? (
+                <ActivityIndicator size="small" color={AppColors.white} />
+              ) : (
+                <ThemedText style={styles.nicknameSaveButtonText}>
+                  保存称呼
+                </ThemedText>
+              )}
+            </TouchableOpacity>
+          </View>
+
           <TouchableOpacity
             style={[styles.actionRow, styles.optionRowBorder]}
             onPress={() => void handleCreateInvitation()}
@@ -1789,6 +1888,40 @@ const styles = createThemedStyleSheet({
   optionLabel: {
     fontSize: 15,
     color: AppColors.text,
+  },
+  nicknameBlock: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    gap: 8,
+  },
+  nicknameInput: {
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: AppColors.border,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    fontSize: 15,
+    color: AppColors.text,
+    backgroundColor: AppColors.background,
+  },
+  nicknameSaveButton: {
+    marginTop: 4,
+    alignSelf: "flex-start",
+    minHeight: 36,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: AppColors.primary,
+  },
+  nicknameSaveButtonDisabled: {
+    opacity: 0.5,
+  },
+  nicknameSaveButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: AppColors.white,
   },
   optionBadge: {
     fontSize: 12,

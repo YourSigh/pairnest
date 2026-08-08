@@ -4,6 +4,7 @@ import { TouchableOpacity, View } from "react-native";
 import { ThemedText } from "@/components/themed-text";
 import { getMoodOption } from "@/constants/check-in";
 import type { CoupleCheckInMood } from "@/constants/check-in";
+import { CHAT_ROLE_NAMES } from "@/constants/chat";
 import { AppColors, createThemedStyleSheet } from "@/constants/theme";
 import type {
   CoupleCheckInData,
@@ -151,11 +152,15 @@ export function CoupleCheckInCalendar({
       <View style={styles.legend}>
         <View style={styles.legendItem}>
           <RoleIcon role="female" mood="miss" />
-          <ThemedText style={styles.legendText}>伴侣 A打卡</ThemedText>
+          <ThemedText style={styles.legendText}>
+            {CHAT_ROLE_NAMES.female}打卡
+          </ThemedText>
         </View>
         <View style={styles.legendItem}>
           <RoleIcon role="male" mood="happy" />
-          <ThemedText style={styles.legendText}>伴侣 B打卡</ThemedText>
+          <ThemedText style={styles.legendText}>
+            {CHAT_ROLE_NAMES.male}打卡
+          </ThemedText>
         </View>
       </View>
     </View>

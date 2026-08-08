@@ -3,6 +3,10 @@ import { prisma } from '../db';
 import { requireCurrentCoupleId } from './tenant-context';
 import { isAiConfigured, runChatCompletion } from './ai';
 import type { ChatRole } from './chat';
+import {
+  DEFAULT_PARTNER_NICKNAMES,
+  loadCouplePartnerNicknames,
+} from './partner-names';
 
 export type ReportType = 'monthly' | 'yearly';
 type ReportTone = 'sky' | 'rose' | 'sunset' | 'mint' | 'violet';
@@ -53,11 +57,6 @@ type ReportStats = {
   pet: { interactions: number; xpEarned: number; topAction: string | null };
   letters: { sent: number; completed: number };
   ai: { conversations: number };
-};
-
-const ROLE_NAMES: Record<ChatRole, string> = {
-  female: '伴侣 A',
-  male: '伴侣 B',
 };
 
 const MOOD_NAMES: Record<string, string> = {
@@ -302,14 +301,20 @@ function periodLabel(type: ReportType, period: string) {
     : `${period}年`;
 }
 
-function buildPages(type: ReportType, period: string, role: ChatRole, stats: ReportStats): ReportPage[] {
+function buildPages(
+  type: ReportType,
+  period: string,
+  role: ChatRole,
+  stats: ReportStats,
+  roleNames: Record<ChatRole, string> = DEFAULT_PARTNER_NICKNAMES,
+): ReportPage[] {
   const label = periodLabel(type, period);
   const pages: ReportPage[] = [
     {
       id: 'cover',
       kind: 'cover',
       eyebrow: type === 'monthly' ? '月度回忆' : '年度回忆',
-      title: `${ROLE_NAMES[role]}，这是我们的${label}`,
+      title: `${roleNames[role]}，这是我们的${label}`,
       body: `把散落在 ${stats.range.days} 天里的小事，轻轻收进这一份回忆。`,
       icon: 'sparkles',
       tone: 'sky',
@@ -415,14 +420,19 @@ function cleanFactualCopy(value: unknown, fallback: string, maxLength: number) {
     : fallback;
 }
 
-async function personalizePages(pages: ReportPage[], stats: ReportStats, role: ChatRole) {
+async function personalizePages(
+  pages: ReportPage[],
+  stats: ReportStats,
+  role: ChatRole,
+  roleNames: Record<ChatRole, string>,
+) {
   if (!isAiConfigured()) return { pages, generatedByAi: false };
   const prompt = [
     '你是一位克制、温暖的中文生活报告编辑。',
     '请根据真实统计，润色每张卡片的 title、body 和 detail。不得新增、改写或推测任何数字，不得编造事件。',
     '语气自然，避免营销腔、网络热梗和过度煽情。title 不超过 20 字，body 不超过 70 字，detail 不超过 35 字。',
     '只返回严格 JSON，格式：{"cards":{"页面id":{"title":"...","body":"...","detail":"..."}}}。',
-    `阅读者：${ROLE_NAMES[role]}`,
+    `阅读者：${roleNames[role]}`,
     `统计：${JSON.stringify(stats)}`,
     `待润色卡片：${JSON.stringify(pages.map(({ id, title, body, detail }) => ({ id, title, body, detail })))}`,
   ].join('\n');
@@ -518,9 +528,12 @@ async function generate(options: {
 
   // Use the collection start time so a request spanning midnight remains provisional.
   const generationStartedAt = new Date();
-  const stats = await collectStats(type, period, role);
-  const basePages = buildPages(type, period, role, stats);
-  const personalized = await personalizePages(basePages, stats, role);
+  const [stats, roleNames] = await Promise.all([
+    collectStats(type, period, role),
+    loadCouplePartnerNicknames(coupleId),
+  ]);
+  const basePages = buildPages(type, period, role, stats, roleNames);
+  const personalized = await personalizePages(basePages, stats, role, roleNames);
   const label = periodLabel(type, period);
   const payload: ReportPayload = {
     title: `${label}回忆`,

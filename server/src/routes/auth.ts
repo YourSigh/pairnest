@@ -37,6 +37,11 @@ import {
   PAIRING_CODE_LENGTH,
   pairingCodeExpiresAt,
 } from "../lib/pairing";
+import {
+  normalizePartnerNickname,
+  partnerNicknameField,
+  PARTNER_NICKNAME_MAX_LENGTH,
+} from "../lib/partner-names";
 import { getCoupleStorageUsage, toStorageQuotaDto } from "../lib/storage-quota";
 import { getAuthenticatedPartnerRole, requireAuth } from "../middleware/auth";
 import { coupleRateLimit, ipRateLimit } from "../middleware/rate-limit";
@@ -114,6 +119,14 @@ function createTokenResponse(
 
 function oppositePartnerRole(role: PartnerRole): PartnerRole {
   return role === "partnerA" ? "partnerB" : "partnerA";
+}
+
+function requirePartnerNickname(value: unknown) {
+  const nickname = normalizePartnerNickname(value);
+  if (!nickname) {
+    return null;
+  }
+  return nickname;
 }
 
 function createInvitationRecoveryCode(
@@ -383,6 +396,8 @@ authRouter.get("/status", requireAuth, async (_req, res) => {
     partnerBound:
       couple.status === "paired" ||
       Boolean(partnerCredential || historicalPartner),
+    partnerANickname: couple.partnerANickname,
+    partnerBNickname: couple.partnerBNickname,
     deletionRequestedBy: couple.deletionRequestedBy,
     deletionRequestedAt: couple.deletionRequestedAt,
     deletionCanCompleteAt:
@@ -391,6 +406,42 @@ authRouter.get("/status", requireAuth, async (_req, res) => {
         : null,
   });
 });
+
+authRouter.patch(
+  "/couples/partner-nickname",
+  requireAuth,
+  coupleRateLimit("partner-nickname", 30, 60 * 60 * 1000),
+  async (req, res) => {
+    const partnerRole = getAuthenticatedPartnerRole(res);
+    const coupleId = res.locals.auth.claims.coupleId as string;
+    const nickname = requirePartnerNickname(req.body?.nickname);
+    if (!nickname) {
+      res.status(400).json({
+        ok: false,
+        code: "INVALID_PARTNER_NICKNAME",
+        message: `请填写对对方的称呼，最多 ${PARTNER_NICKNAME_MAX_LENGTH} 个字`,
+      });
+      return;
+    }
+
+    const targetRole = oppositePartnerRole(partnerRole);
+    const field = partnerNicknameField(targetRole);
+    const couple = await prisma.couple.update({
+      where: { id: coupleId },
+      data: { [field]: nickname },
+      select: {
+        partnerANickname: true,
+        partnerBNickname: true,
+      },
+    });
+
+    res.json({
+      ok: true,
+      partnerANickname: couple.partnerANickname,
+      partnerBNickname: couple.partnerBNickname,
+    });
+  },
+);
 
 authRouter.get("/couples/storage", requireAuth, async (_req, res) => {
   const coupleId = res.locals.auth.claims.coupleId as string;
@@ -404,15 +455,24 @@ authRouter.post(
   async (req, res) => {
     const openCreateEnabled = isOpenCoupleCreateEnabled();
     const partnerRole = normalizePartnerRole(req.body?.partnerRole);
+    const partnerNickname = requirePartnerNickname(req.body?.partnerNickname);
     const requestId = normalizeRequestId(req.body?.requestId);
     const deviceId = requiredString(req.body?.deviceId, 128);
     const deviceSecret = requiredString(req.body?.deviceSecret, 256);
     const metadata = normalizeDeviceMetadata(req.body?.device);
-    if (!partnerRole || !requestId || !deviceId || deviceSecret.length < 32) {
+    if (
+      !partnerRole ||
+      !partnerNickname ||
+      !requestId ||
+      !deviceId ||
+      deviceSecret.length < 32
+    ) {
       res.status(400).json({
         ok: false,
         code: "INVALID_CREATE_REQUEST",
-        message: "创建情侣空间前必须提供请求标识、本人身份和有效设备凭证",
+        message: !partnerNickname
+          ? `创建前请填写对对方的称呼，最多 ${PARTNER_NICKNAME_MAX_LENGTH} 个字`
+          : "创建情侣空间前必须提供请求标识、本人身份和有效设备凭证",
       });
       return;
     }
@@ -551,6 +611,14 @@ authRouter.post(
                       pairingCodeExpiresAt: replayExpiresAt,
                       pairingTargetRole: targetRole,
                       pairingPurpose: "join",
+                      [partnerNicknameField(targetRole)]: partnerNickname,
+                    },
+                  });
+                } else {
+                  await tx.couple.update({
+                    where: { id: couple.id },
+                    data: {
+                      [partnerNicknameField(targetRole)]: partnerNickname,
                     },
                   });
                 }
@@ -622,6 +690,8 @@ authRouter.post(
                 pairingTargetRole: oppositePartnerRole(partnerRole),
                 pairingPurpose: "join",
                 status: "open",
+                [partnerNicknameField(oppositePartnerRole(partnerRole))]:
+                  partnerNickname,
               },
             });
 
@@ -817,6 +887,7 @@ authRouter.post(
     const deviceId = requiredString(req.body?.deviceId, 128);
     const deviceSecret = requiredString(req.body?.deviceSecret, 256);
     const requestedPartnerRole = normalizePartnerRole(req.body?.partnerRole);
+    const partnerNickname = normalizePartnerNickname(req.body?.partnerNickname);
     const metadata = normalizeDeviceMetadata(req.body?.device);
     const attemptSubjects = getAttemptSubjects(req, deviceId);
 
@@ -835,6 +906,10 @@ authRouter.post(
       );
       return;
     }
+
+    // Invitation join must name the other partner; recovery reuses existing names.
+    // We only know whether this is a join after resolving the code, so validate
+    // nickname presence inside the transaction for invitation paths.
 
     const normalizedCode = normalizePairingCode(pairingCode);
     const pairingCodeHash = hashPairingCode(normalizedCode);
@@ -1021,6 +1096,9 @@ authRouter.post(
         }
 
         if (usingInvitationCode || legacyAuthorized) {
+          if (!partnerNickname) {
+            return { kind: "nickname-required" as const };
+          }
           const [roleCredential, historicalRoleSession] = await Promise.all([
             tx.partnerRecoveryCredential.findUnique({
               where: {
@@ -1153,6 +1231,13 @@ authRouter.post(
           couple.status === "paired" || boundRoleCount >= 2
             ? "paired"
             : "open";
+        const nicknameUpdate =
+          (usingInvitationCode || legacyAuthorized) && partnerNickname
+            ? {
+                [partnerNicknameField(oppositePartnerRole(activationRole))]:
+                  partnerNickname,
+              }
+            : {};
         if (legacyAuthorized || usingInvitationCode) {
           await tx.couple.update({
             where: { id: couple.id },
@@ -1162,6 +1247,7 @@ authRouter.post(
               pairingTargetRole: null,
               pairingPurpose: null,
               status: nextStatus,
+              ...nicknameUpdate,
             },
           });
         } else {
@@ -1213,6 +1299,14 @@ authRouter.post(
           ok: false,
           code: "PARTNER_ROLE_REQUIRED",
           message: "旧版 shared secret 激活必须选择本人身份",
+        });
+        return;
+      }
+      if (result.kind === "nickname-required") {
+        res.status(400).json({
+          ok: false,
+          code: "PARTNER_NICKNAME_REQUIRED",
+          message: `加入前请填写对对方的称呼，最多 ${PARTNER_NICKNAME_MAX_LENGTH} 个字`,
         });
         return;
       }

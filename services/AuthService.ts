@@ -8,11 +8,13 @@ import { Platform } from "react-native";
 import { PAIRNEST_API } from "@/constants/api";
 import {
   isPartnerRole,
+  normalizePartnerNickname,
   type PartnerRole,
   toChatRole,
 } from "@/constants/chat";
 import { CoupleLocalCache } from "@/services/CoupleLocalCache";
 import { InstanceConfigService } from "@/services/InstanceConfigService";
+import { PartnerNameService } from "@/services/PartnerNameService";
 import { RoleStorage } from "@/services/RoleStorage";
 
 const DEVICE_ID_KEY = "pairnest.auth.deviceId";
@@ -176,6 +178,8 @@ export type CoupleAuthStatus = {
   partnerRole: PartnerRole;
   partnerActive: boolean;
   partnerBound: boolean;
+  partnerANickname: string | null;
+  partnerBNickname: string | null;
   deletionRequestedBy: PartnerRole | null;
   deletionRequestedAt: string | null;
   deletionCanCompleteAt: string | null;
@@ -605,8 +609,18 @@ class AuthServiceImpl {
     });
   }
 
-  async createCouple(partnerRole: PartnerRole): Promise<CreateCoupleResult> {
+  async createCouple(
+    partnerRole: PartnerRole,
+    partnerNickname: string,
+  ): Promise<CreateCoupleResult> {
     return this.runSensitiveOperation("recovery-credential", async () => {
+      const nickname = normalizePartnerNickname(partnerNickname);
+      if (!nickname) {
+        throw new AuthApiError(
+          `创建前请填写对对方的称呼，最多 ${PartnerNameService.maxLength} 个字`,
+          "INVALID_PARTNER_NICKNAME",
+        );
+      }
       const serverUrl = InstanceConfigService.getApiBaseUrl();
       const credentials = await this.getOrCreateDeviceCredentials();
       const createRequest = await this.getOrCreatePendingCoupleCreateRequest(
@@ -622,6 +636,7 @@ class AuthServiceImpl {
           body: JSON.stringify({
             requestId: createRequest.requestId,
             partnerRole,
+            partnerNickname: nickname,
             ...credentials,
             device: getDeviceMetadata(),
           }),
@@ -792,6 +807,7 @@ class AuthServiceImpl {
     pairingCode: string,
     partnerRole: PartnerRole,
     purpose: PairingPurpose,
+    partnerNickname?: string,
   ): Promise<ActivationResult> {
     const serverUrl = InstanceConfigService.getApiBaseUrl();
     const normalizedCode = normalizePairingCode(pairingCode);
@@ -809,6 +825,16 @@ class AuthServiceImpl {
         "PENDING_ACTIVATION_MISMATCH",
       );
     }
+    const nickname =
+      purpose === "join"
+        ? normalizePartnerNickname(partnerNickname)
+        : null;
+    if (purpose === "join" && !nickname) {
+      throw new AuthApiError(
+        `加入前请填写对对方的称呼，最多 ${PartnerNameService.maxLength} 个字`,
+        "PARTNER_NICKNAME_REQUIRED",
+      );
+    }
     const sessionGeneration = this.sessionGeneration;
     const { response, body } = await fetchAuthJsonRequest(
       PAIRNEST_API.authActivate,
@@ -819,6 +845,7 @@ class AuthServiceImpl {
           coupleId,
           pairingCode: normalizedCode,
           partnerRole,
+          ...(nickname ? { partnerNickname: nickname } : {}),
           ...credentials,
           device: getDeviceMetadata(),
         }),
@@ -1034,9 +1061,62 @@ class AuthServiceImpl {
         typeof body.partnerBound === "boolean"
           ? body.partnerBound
           : true,
+      partnerANickname:
+        typeof body.partnerANickname === "string"
+          ? body.partnerANickname
+          : null,
+      partnerBNickname:
+        typeof body.partnerBNickname === "string"
+          ? body.partnerBNickname
+          : null,
       deletionRequestedBy: body.deletionRequestedBy ?? null,
       deletionRequestedAt: body.deletionRequestedAt ?? null,
       deletionCanCompleteAt: body.deletionCanCompleteAt ?? null,
+    };
+  }
+
+  async updatePartnerNickname(nickname: string): Promise<{
+    partnerANickname: string | null;
+    partnerBNickname: string | null;
+  }> {
+    const normalized = normalizePartnerNickname(nickname);
+    if (!normalized) {
+      throw new AuthApiError(
+        `请填写对对方的称呼，最多 ${PartnerNameService.maxLength} 个字`,
+        "INVALID_PARTNER_NICKNAME",
+      );
+    }
+    const { response, body } = await this.fetchAuthEndpoint(
+      PAIRNEST_API.authCouplesPartnerNickname,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nickname: normalized }),
+      },
+    );
+    if (!response.ok) throw parseErrorResponse(response, body);
+    if (
+      !isRecord(body) ||
+      body.ok !== true ||
+      (body.partnerANickname !== null &&
+        typeof body.partnerANickname !== "string") ||
+      (body.partnerBNickname !== null &&
+        typeof body.partnerBNickname !== "string")
+    ) {
+      throw new AuthApiError(
+        "更新对方称呼失败",
+        "INVALID_PARTNER_NICKNAME_RESPONSE",
+      );
+    }
+    return {
+      partnerANickname:
+        typeof body.partnerANickname === "string"
+          ? body.partnerANickname
+          : null,
+      partnerBNickname:
+        typeof body.partnerBNickname === "string"
+          ? body.partnerBNickname
+          : null,
     };
   }
 
@@ -1985,6 +2065,7 @@ class AuthServiceImpl {
           ? require("@/services/BackgroundMessagingService").BackgroundMessagingService.stop()
           : Promise.resolve(),
       ]);
+      PartnerNameService.reset();
     });
   }
 

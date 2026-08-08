@@ -4,6 +4,7 @@ import { randomUUID } from "crypto";
 import { prisma } from "../db";
 import { isAiConfigured, runChatCompletion } from "./ai";
 import { isChatRole, type ChatRole } from "./chat";
+import { loadCouplePartnerNicknames } from "./partner-names";
 import { requireCurrentCoupleId } from "./tenant-context";
 
 export type TruthOrDareKind = "truth" | "dare";
@@ -211,10 +212,10 @@ function generationPrompt(options: {
   performerRole: ChatRole;
   history: string[];
   count: number;
+  roleNames: Record<ChatRole, string>;
 }) {
-  const pickerName = options.pickerRole === "female" ? "伴侣 A" : "伴侣 B";
-  const performerName =
-    options.performerRole === "female" ? "伴侣 A" : "伴侣 B";
+  const pickerName = options.roleNames[options.pickerRole];
+  const performerName = options.roleNames[options.performerRole];
   const kindName = options.kind === "truth" ? "真心话" : "大冒险";
   const kindRules =
     options.kind === "truth"
@@ -437,8 +438,9 @@ export function startTruthOrDareRound(
       ? normalizeTruthOrDareRole(latest.pickerRole)
       : null;
     if (expectedRole && expectedRole !== performerRole) {
+      const roleNames = await loadCouplePartnerNicknames();
       throw new TruthOrDareError(
-        `这一轮该${expectedRole === "female" ? "伴侣 A" : "伴侣 B"}选择真心话或大冒险`,
+        `这一轮该${roleNames[expectedRole]}选择真心话或大冒险`,
         "NOT_YOUR_TURN",
       );
     }
@@ -501,6 +503,7 @@ export function generateTruthOrDareQuestions(
     const history = historyRows.map((item) => item.content);
     const accepted: string[] = [];
     const kind = normalizeKind(current.kind);
+    const roleNames = await loadCouplePartnerNicknames();
 
     for (
       let attempt = 0;
@@ -519,6 +522,7 @@ export function generateTruthOrDareQuestions(
               partnerRole(role),
             history: [...history, ...accepted],
             count: missing,
+            roleNames,
           }),
         );
       } catch (error) {

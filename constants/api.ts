@@ -7,6 +7,7 @@ const STATIC_ENDPOINTS = {
   authCouplesCreate: "/v1/auth/couples/create",
   authCouplesValidate: "/v1/auth/couples/validate",
   authCouplesInvite: "/v1/auth/couples/invite",
+  authCouplesPartnerNickname: "/v1/auth/couples/partner-nickname",
   authCouplesRecoveryCode: "/v1/auth/couples/recovery-code",
   authCouplesDeletionRequest: "/v1/auth/couples/deletion/request",
   authCouplesDeletionCancel: "/v1/auth/couples/deletion/cancel",

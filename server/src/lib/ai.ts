@@ -1,5 +1,6 @@
 import { prisma } from '../db';
 import { ChatRole } from './chat';
+import { loadCouplePartnerNicknames } from './partner-names';
 import { requireCurrentCoupleId } from './tenant-context';
 
 type ChatCompletionMessage = {
@@ -18,12 +19,7 @@ type MemoryExtraction = {
   content?: string;
 };
 
-const CHAT_ROLE_NAMES: Record<ChatRole, string> = {
-  female: '伴侣 A',
-  male: '伴侣 B',
-};
-
-const MEMORY_SUBJECT_LABELS: Record<string, string> = {
+const MEMORY_SUBJECT_FALLBACKS: Record<string, string> = {
   female: '伴侣 A',
   male: '伴侣 B',
   shared: '两个人/关系',
@@ -114,7 +110,7 @@ export function isAiConfigured() {
   return Boolean(config.apiUrl && config.apiKey && config.model);
 }
 
-async function loadAppMemories() {
+async function loadAppMemories(roleNames: Record<ChatRole, string>) {
   const coupleId = requireCurrentCoupleId();
   const memories = await prisma.aiMemory.findMany({
     where: { coupleId },
@@ -123,29 +119,35 @@ async function loadAppMemories() {
   });
 
   if (memories.length === 0) return '';
+  const subjectLabels: Record<string, string> = {
+    ...MEMORY_SUBJECT_FALLBACKS,
+    female: roleNames.female,
+    male: roleNames.male,
+  };
   return memories
     .map((memory) => {
       const subject =
-        MEMORY_SUBJECT_LABELS[memory.subjectRole] ?? memory.subjectRole;
-      const source = CHAT_ROLE_NAMES[memory.sourceRole as ChatRole] ?? memory.sourceRole;
+        subjectLabels[memory.subjectRole] ?? memory.subjectRole;
+      const source = roleNames[memory.sourceRole as ChatRole] ?? memory.sourceRole;
       return `- [${subject}｜来自 ${source}] ${memory.content}`;
     })
     .join('\n');
 }
 
 export async function buildAiSystemPrompt(currentRole: ChatRole) {
-  const appMemories = await loadAppMemories();
-  const currentName = CHAT_ROLE_NAMES[currentRole];
+  const roleNames = await loadCouplePartnerNicknames();
+  const appMemories = await loadAppMemories(roleNames);
+  const currentName = roleNames[currentRole];
   const partnerRole: ChatRole = currentRole === 'female' ? 'male' : 'female';
-  const partnerName = CHAT_ROLE_NAMES[partnerRole];
+  const partnerName = roleNames[partnerRole];
 
   return [
     '你是 PairNest 中为一对伴侣提供帮助的私有 AI 助手。',
     `当前正在和你对话的人是：${currentName}。另一个人是：${partnerName}。`,
     '',
     '身份与人称规则，非常重要：',
-    `- female 是内部兼容角色，当前显示为 ${CHAT_ROLE_NAMES.female}。`,
-    `- male 是内部兼容角色，当前显示为 ${CHAT_ROLE_NAMES.male}。`,
+    `- female 是内部兼容角色，当前显示为 ${roleNames.female}。`,
+    `- male 是内部兼容角色，当前显示为 ${roleNames.male}。`,
     '- 用户提到“我”时指当前对话者；提到“对象/伴侣”时通常指另一位成员。',
     '- 长期记忆可能来自任一成员，回答时必须结合标注和当前对话者视角，不能臆测身份。',
     '- 当用户问“我对象是什么样的人”时，优先回答当前对话人的对象是什么样的人。',
@@ -352,7 +354,8 @@ export async function rememberFromAiExchange(options: {
   if (!isAiConfigured()) return;
 
   const coupleId = requireCurrentCoupleId();
-  const speakerName = CHAT_ROLE_NAMES[options.speakerRole];
+  const roleNames = await loadCouplePartnerNicknames(coupleId);
+  const speakerName = roleNames[options.speakerRole];
   const extraction = await runChatCompletion([
     {
       role: 'system',
@@ -362,7 +365,7 @@ export async function rememberFromAiExchange(options: {
         '不要保存一次性的请求、寒暄、临时情绪、明显不确定的信息。',
         '只输出 JSON 数组，不要输出解释。',
         '数组元素格式：{"subjectRole":"female|male|shared","content":"一句中文记忆"}。',
-        'subjectRole 规则：关于伴侣 A 用 female，关于伴侣 B 用 male，关于两个人/关系用 shared。',
+        `subjectRole 规则：关于 ${roleNames.female} 用 female，关于 ${roleNames.male} 用 male，关于两个人/关系用 shared。`,
         '最多输出 5 条；没有值得保存的内容时输出 []。',
       ].join('\n'),
     },

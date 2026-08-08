@@ -50,6 +50,7 @@ import { BackgroundMessagingStorage } from "@/services/BackgroundMessagingStorag
 import { ChatService } from "@/services/ChatService";
 import { NavigationLayoutStorage } from "@/services/NavigationLayoutStorage";
 import { NotificationService } from "@/services/NotificationService";
+import { PartnerNamesProvider } from "@/services/PartnerNamesContext";
 import { RoleProvider, useRole } from "@/services/RoleContext";
 import { SettingsDrawerGestureLock } from "@/services/SettingsDrawerGestureLock";
 import { TimelineAssetCache } from "@/services/TimelineAssetCache";
@@ -732,8 +733,10 @@ export default function RootLayout() {
                 <View style={{ flex: 1, backgroundColor: AppColors.background }}>
                   <AuthGate>
                     <RoleProvider>
-                      <AppUpdateChecker enabled={!showSplash} />
-                      <AppTabs themeRevision={themeRevision} />
+                      <PartnerNamesProvider>
+                        <AppUpdateChecker enabled={!showSplash} />
+                        <AppTabs themeRevision={themeRevision} />
+                      </PartnerNamesProvider>
                     </RoleProvider>
                   </AuthGate>
                   {showSplash && (

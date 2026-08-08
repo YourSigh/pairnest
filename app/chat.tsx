@@ -5400,7 +5400,6 @@ const styles = createThemedStyleSheet({
   emptyState: {
     alignItems: "center",
     gap: 10,
-    transform: [{ scaleY: -1 }],
   },
   emptyText: {
     fontSize: 15,

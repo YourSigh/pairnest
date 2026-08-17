@@ -38,7 +38,7 @@
       "predictiveBackGestureEnabled": false,
       "softwareKeyboardLayoutMode": "resize",
       "package": "top.yoursigh.pairnest",
-      "versionCode": 2
+      "versionCode": 3
     },
     "web": {
       "output": "static",

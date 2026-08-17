@@ -563,6 +563,13 @@ function AppTabs({ themeRevision }: { themeRevision: number }) {
           tabBarStyle: { display: "none" },
         }}
       />
+      <Tabs.Screen
+        name="meal-draw"
+        options={{
+          href: null,
+          tabBarStyle: { display: "none" },
+        }}
+      />
       </Tabs>
       {floatingChatEnabled && !settingsDrawerVisible ? (
         <GameChatOverlay

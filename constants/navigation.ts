@@ -162,6 +162,7 @@ export function getNavigationItem(id: AppNavigationId) {
 
 export type MoreFeatureId =
   | "reports"
+  | "meal-draw"
   | "pet"
   | "tic-tac-toe"
   | "draw-guess"
@@ -189,6 +190,14 @@ export const MORE_FEATURES: MoreFeatureItem[] = [
     icon: "book-outline",
     color: "#8E9FD2",
     route: "/reports",
+  },
+  {
+    id: "meal-draw",
+    title: "饭点盲盒",
+    subtitle: "这顿吃什么",
+    icon: "restaurant-outline",
+    color: "#E9845B",
+    route: "/meal-draw" as Href,
   },
   {
     id: "pet",
